@@ -2,9 +2,12 @@ FROM python:3.12-slim
 
 WORKDIR /app
 
+# System dependencies aur Chromium ko direct apt se install kar rahe hain
 RUN apt-get update && apt-get install -y \
     wget \
     gnupg \
+    chromium \
+    chromium-driver \
     libglib2.0-0 \
     libnss3 \
     libnspr4 \
@@ -31,10 +34,11 @@ RUN apt-get update && apt-get install -y \
     libwayland-client0 \
     && rm -rf /var/lib/apt/lists/*
 
+# Playwright ko batane ke liye ki system wala chromium use kare
+ENV PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH=/usr/bin/chromium
+
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
-
-RUN playwright install chromium
 
 COPY . .
 
