@@ -1,0 +1,5 @@
+httpx
+pyotp
+python-telegram-bot
+playwright
+2captcha-python
