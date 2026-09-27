@@ -34,7 +34,8 @@ RUN apt-get update && apt-get install -y \
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-RUN playwright install --with-deps chromium
+# Yahan --with-deps hata diya hai taaki font packages ka error na aaye
+RUN playwright install chromium
 
 COPY . .
 
