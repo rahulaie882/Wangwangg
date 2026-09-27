@@ -31,8 +31,9 @@ CONFIG = {
     "max_retries":    3,
 }
 
+# Teri di gayi paid rotating proxies ki list
 PROXIES = [
-    "http://uncpjndo:w77Ebc0h2A@us6.cactussstp.com:3129",
+    "http://uncpjndo:w77Ebc0h2A@Us6.cactussstp.com:3129",
     "http://uncpjndo:w77Ebc0h2A@hk1.cactussstp.com:8080",
     "http://bvmbsmie:shibby2511@it1.cactussstp.com:3129",
     "http://uncpjndo:w77Ebc0h2A@uk3.cactussstp.com:3129",
@@ -109,7 +110,8 @@ async def filter_live_proxies():
                     valid_proxies.append(proxy)
         except Exception:
             pass
-    PROXIES = valid_proxies
+    if valid_proxies:
+        PROXIES = valid_proxies
     log.info(f"✨ Total Live Proxies: {len(PROXIES)}")
 
 def rnd_username() -> str:
@@ -305,11 +307,22 @@ class FiveSim:
             except Exception:
                 pass
 
+# Human-like typing with random delays and micro-pauses
 async def human_type(page, selector: str, text: str):
-    await page.click(selector)
-    for ch in text:
-        await page.keyboard.type(ch, delay=random.randint(60, 200))
-    await asyncio.sleep(random.uniform(0.3, 0.8))
+    try:
+        await page.click(selector)
+        await asyncio.sleep(random.uniform(0.5, 1.2))
+        for ch in text:
+            await page.keyboard.type(ch, delay=random.randint(80, 220))
+            if random.random() < 0.12:
+                await asyncio.sleep(random.uniform(0.1, 0.4))
+        await asyncio.sleep(random.uniform(0.4, 0.9))
+    except Exception as e:
+        log.warning(f"Human type error on {selector}: {e}")
+        await page.fill(selector, text)
+
+async def human_delay(min_sec=1.5, max_sec=3.5):
+    await asyncio.sleep(random.uniform(min_sec, max_sec))
 
 async def field_ok(page, selector: str, timeout=60000) -> bool:
     try:
@@ -462,23 +475,32 @@ async def create_ig_account(status_cb=None) -> dict | None:
                     viewport={"width": 1280, "height": 800},
                     locale="en-US"
                 )
+                # Webdriver property hide karne ke liye initialization script
                 await ctx.add_init_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined});")
                 page = await ctx.new_page()
 
                 try:
                     await status("🌐 Instagram signup page khul rahi hai...")
                     await page.goto("https://www.instagram.com/accounts/emailsignup/", wait_until="domcontentloaded", timeout=60000)
-                    await asyncio.sleep(5)
+                    await human_delay(3.0, 5.0)
 
                     await page.wait_for_selector('input[name="emailOrPhone"], input[name="email"], input[type="text"]', timeout=60000)
 
+                    # Human-like natural filling with delays
                     await human_type(page, 'input[name="emailOrPhone"], input[name="email"], input[type="text"]', creds["email"])
+                    await human_delay(1.0, 2.0)
+                    
                     await human_type(page, 'input[name="fullName"], input[aria-label*="Full Name"]', creds["name"])
+                    await human_delay(1.0, 2.0)
+                    
                     await human_type(page, 'input[name="username"], input[aria-label*="Username"]', creds["username"])
+                    await human_delay(1.0, 2.0)
+                    
                     await human_type(page, 'input[name="password"], input[aria-label*="Password"]', creds["password"])
+                    await human_delay(1.5, 3.0)
                     
                     await page.click('button[type="submit"]')
-                    await asyncio.sleep(3)
+                    await human_delay(3.0, 5.0)
 
                     await solve_captcha_if_present(page)
 
@@ -486,10 +508,13 @@ async def create_ig_account(status_cb=None) -> dict | None:
                         bday = creds["birthday"]
                         if await field_ok(page, 'select[title="Month:"]', timeout=60000):
                             await page.select_option('select[title="Month:"]', bday["month"])
+                            await human_delay(0.8, 1.5)
                             await page.select_option('select[title="Day:"]',   bday["day"])
+                            await human_delay(0.8, 1.5)
                             await page.select_option('select[title="Year:"]',  bday["year"])
+                            await human_delay(1.0, 2.0)
                             await page.click('button[type="submit"]')
-                            await asyncio.sleep(3)
+                            await human_delay(3.0, 5.0)
                     except Exception:
                         pass
 
@@ -498,38 +523,42 @@ async def create_ig_account(status_cb=None) -> dict | None:
                         code = await mail.wait_code(timeout=120)
                         if code:
                             await human_type(page, 'input[name="email_confirmation_code"]', code)
+                            await human_delay(1.0, 2.0)
                             await page.click('button[type="submit"]')
-                            await asyncio.sleep(3)
+                            await human_delay(3.0, 5.0)
 
                     if await field_ok(page, 'input[name="phone_number"]', timeout=60000):
                         await human_type(page, 'input[name="phone_number"]', creds["phone"])
+                        await human_delay(1.0, 2.0)
                         await page.click('button[type="submit"]')
-                        await asyncio.sleep(2)
+                        await human_delay(2.0, 4.0)
                         
                         await status("📩 SMS verification code ka intezar hai...")
                         sms_code = await sms.wait_sms(timeout=120)
                         if sms_code:
                             await human_type(page, 'input[name="verification_code"]', sms_code)
+                            await human_delay(1.0, 2.0)
                             await page.click('button[type="submit"]')
-                            await asyncio.sleep(3)
+                            await human_delay(3.0, 5.0)
 
                     if profile_pic:
                         await status("🖼️ Custom Profile Picture lagayi ja rahi hai...")
                         await page.goto("https://www.instagram.com/accounts/edit/", wait_until="domcontentloaded", timeout=60000)
-                        await asyncio.sleep(2)
+                        await human_delay(2.0, 4.0)
                         pic_input = await page.query_selector('input[type="file"]')
                         if pic_input:
                             await pic_input.set_input_files(profile_pic)
-                            await asyncio.sleep(3)
+                            await human_delay(3.0, 5.0)
 
                     try:
                         bio_field = await page.query_selector('textarea[name="biography"]')
                         if bio_field:
                             await bio_field.fill(creds["bio"])
+                            await human_delay(1.0, 2.0)
                             submit = await page.query_selector('button[type="submit"]')
                             if submit:
                                 await submit.click()
-                                await asyncio.sleep(2)
+                                await human_delay(2.0, 3.0)
                     except Exception:
                         pass
 
