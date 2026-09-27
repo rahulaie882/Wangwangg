@@ -2,7 +2,6 @@ FROM python:3.12-slim
 
 WORKDIR /app
 
-# Install system dependencies required for Playwright & Chromium
 RUN apt-get update && apt-get install -y \
     wget \
     gnupg \
@@ -29,14 +28,12 @@ RUN apt-get update && apt-get install -y \
     libxrandr2 \
     libxrender1 \
     libxtst6 \
-    libatspi0 \
     libwayland-client0 \
     && rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Install Playwright browser binaries
 RUN playwright install --with-deps chromium
 
 COPY . .
