@@ -1,5 +1,6 @@
 python-telegram-bot
 playwright
+pyotp
 httpx==0.27.2
 requests
 beautifulsoup4
