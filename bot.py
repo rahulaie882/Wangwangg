@@ -19,8 +19,8 @@ from twocaptcha import TwoCaptcha
 
 # ─── CONFIG ────────────────────────────────────────────────────────────────
 
-BOT_TOKEN = "88012530:AAH6r79WOK7uU35uk7bAdZFNh2-aDnNbeww"   # BotFather token
-CHAT_ID   = "7010776848"              # Apna chat ID
+BOT_TOKEN = "8948043707:AAFBVyGi1GQzEpijFyojD0lPd_COFXhdB5Q"   # BotFather token
+CHAT_ID   = "8963867689"              # Apna chat ID
 
 CONFIG = {
     "twocaptcha_key": "6498bcd403bd611438b1fb68568355b1",
