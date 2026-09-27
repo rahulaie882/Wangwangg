@@ -1,728 +1,651 @@
-"""
-╔══════════════════════════════════════════════════════╗
-║   Instagram Account Creator — 99% Guaranteed        ║
-║   Engine: instagrapi (most reliable library)        ║
-║   Phone: 5sim.net                                   ║
-║   Bot: Telegram                                     ║
-╚══════════════════════════════════════════════════════╝
-"""
-
 import asyncio
 import random
 import string
-import re
-import os
-import time
+import httpx
 import json
+import re
+import time
+import os
 import logging
 import pyotp
-import httpx
 from datetime import datetime
-
+from urllib.parse import urlparse
 from telegram import Update
 from telegram.ext import (
     Application, CommandHandler, ContextTypes, MessageHandler, filters
 )
+from playwright.async_api import async_playwright
+from twocaptcha import TwoCaptcha
 
-from instagrapi import Client
-from instagrapi.exceptions import (
-    ChallengeRequired,
-    SelectContactPointRecoveryForm,
-    RecaptchaChallengeForm,
-    BadPassword,
-    UnknownError,
-)
+# ─── CONFIG ────────────────────────────────────────────────────────────────
 
-# ═══════════════════════════════════════
-#  CONFIG
-# ═══════════════════════════════════════
+BOT_TOKEN = "88012530:AAH6r79WOK7uU35uk7bAdZFNh2-aDnNbeww"   # BotFather token
+CHAT_ID   = "7010776848"              # Apna chat ID
 
-BOT_TOKEN   = "8801243530:AAH6r79WOK7uU35uk7bAdZFNh2-aDnNbeww"
-FIVESIM_KEY = "eyJhbGciOiJSUzUxMiIsInR5cCI6IkpXVCJ9.eyJleHAiOjE4MjIwNTIxMDQsImlhdCI6MTc5MDUxNjEwNCwicmF5IjoiNDMzNjhkNTQ5NGNlM2YzM2UzNTYwMGE1ZGIxOTc0NWUiLCJzdWIiOjQ1NzU0ODh9.csk2R9FNfET5ZhvdjBsOpVX-lYiVTHZCPw7UYFpZcCMUhNtjWJ-BhI2vUXB4F_8kIxU1Xlm6nAg4yraJ5lW5jP9xoZHiT6bu7drW_klEBMZ6pSVak_0RjtyCE5wMXeBqnxbsijd7sYhNz9JVXzHud6Qp7Nbaqr-Xwpqz9ilycM353h8c8G2nxr7Csb8xNSOiy1KXU-5LGfa8mErxHqyRQnVsr7gXpnVlSg4sObdrXbzO17UabirAKga0C3O3_ISUD3lsZLI2QDSaFW2LU_jh5SPg6cuCZpg86_JSxAgleLEth2tdxN0_lryw-NUrGGRGSnbtHwVOM5xUeKqMlBrBrw"
-COUNTRY     = "usa"
-OPERATOR    = "any"
-MAX_RETRY   = 3
-
-# ── Sirf ROTATING residential proxy use karo ──────────
-# webshare.io rotating proxy sabse best hai Instagram ke liye
-# Baaki datacenter proxies Instagram detect kar leta hai
+CONFIG = {
+    "twocaptcha_key": "6498bcd403bd611438b1fb68568355b1",
+    "fivesim_key":    "eyJhbGciOiJSUzUxMiIsInR5cCI6IkpXVCJ9.eyJleHAiOjE4MjIwNTIxMDQsImlhdCI6MTc5MDUxNjEwNCwicmF5IjoiNDMzNjhkNTQ5NGNlM2YzM2UzNTYwMGE1ZGIxOTc0NWUiLCJzdWIiOjQ1NzU0ODh9.csk2R9FNfET5ZhvdjBsOpVX-lYiVTHZCPw7UYFpZcCMUhNtjWJ-BhI2vUXB4F_8kIxU1Xlm6nAg4yraJ5lW5jP9xoZHiT6bu7drW_klEBMZ6pSVak_0RjtyCE5wMXeBqnxbsijd7sYhNz9JVXzHud6Qp7Nbaqr-Xwpqz9ilycM353h8c8G2nxr7Csb8xNSOiy1KXU-5LGfa8mErxHqyRQnVsr7gXpnVlSg4sObdrXbzO17UabirAKga0C3O3_ISUD3lsZLI2QDSaFW2LU_jh5SPg6cuCZpg86_JSxAgleLEth2tdxN0_lryw-NUrGGRGSnbtHwVOM5xUeKqMlBrBrw",
+    "country":        "usa",          
+    "operator":       "any",          
+    "headless":       True,
+    "max_retries":    3,
+}
 
 PROXIES = [
-    # BEST — rotating residential (yeh wala rakho)
-    "http://khanrayhan9910-rotate:Asutonu9@p.webshare.io:80",
-
-    # Baaki proxies — rakhein agar upar wala kaam na kare
     "http://uncpjndo:w77Ebc0h2A@us6.cactussstp.com:3129",
+    "http://uncpjndo:w77Ebc0h2A@hk1.cactussstp.com:8080",
+    "http://bvmbsmie:shibby2511@it1.cactussstp.com:3129",
+    "http://uncpjndo:w77Ebc0h2A@uk3.cactussstp.com:3129",
+    "http://yefprelf:dr2gsmab@in1.cactussstp.com:8080",
+    "http://bvmbsmie:shibby2511@au1.cactussstp.com:3129",
+    "http://uncpjndo:w77Ebc0h2A@lv1.cactussstp.com:81",
     "http://hughmuir2:lisamarie11@us3.cactussstp.com:3129",
+    "http://uncpjndo:w77Ebc0h2A@ca1.cactussstp.com:81",
+    "http://yefprelf:dr2gsmab@ch1.cactussstp.com:8080",
+    "http://uncpjndo:w77Ebc0h2A@my1.cactussstp.com:81",
     "http://purevpn0s551451:9dpdlc2nfxgj@px022409.pointtoserver.com:10780",
-    "http://g2rTXpNfPdcw2fzGtWKp62yH:nizar1elad2@ca-mon.pvdata.host:8080",
+    "http://g2rTXpNfPdcw2fzGtWKp62yH:nizar1elad2@in-ban.pvdata.host:8080",
+    "http://khanrayhan9910-rotate:Asutonu9@p.webshare.io:80",
+    "http://1TCNvZkNJiZZPGX:sQfBBjZGVDqYl9V@37.49.150.244:41731",
+    "http://uncpjndo:w77Ebc0h2A@uk2.cactussstp.com:81",
+    "http://purevpn0s551451:9dpdlc2nfxgj@px591801.pointtoserver.com:10780",
     "http://purevpn0s2232045:hww8fqbr72j0@px241102.pointtoserver.com:10780",
+    "http://1401:FVRHsSXw2DNK@p103.squidproxies.com:9238",
+    "http://purevpn0s551451:9dpdlc2nfxgj@px022507.pointtoserver.com:10780",
+    "http://g2rTXpNfPdcw2fzGtWKp62yH:nizar1elad2@it-mil.pvdata.host:8080",
     "http://reseller3270s320237:7Grp9Gki@px023005.pointtoserver.com:10780",
+    "http://g2rTXpNfPdcw2fzGtWKp62yH:nizar1elad2@au-per.pvdata.host:8080",
+    "http://purevpn0s8732217:i67s60ep@px152201.pointtoserver.com:10780",
+    "http://g2rTXpNfPdcw2fzGtWKp62yH:nizar1elad2@my-kua.pvdata.host:8080",
+    "http://purevpn0s7397024:6CU9ZvexLGTqpB@px400501.pointtoserver.com:10780",
+    "http://reseller3270s320237:7Grp9Gki@px051703.pointtoserver.com:10780",
     "http://hughmuir2:lisamarie11@uk3.cactussstp.com:3129",
+    "http://g2rTXpNfPdcw2fzGtWKp62yH:nizar1elad2@sk-bra.pvdata.host:8080",
+    "http://purevpn0s551451:9dpdlc2nfxgj@px410701.pointtoserver.com:10780",
+    "http://bvmbsmie:shibby2511@uk3.cactussstp.com:81",
+    "http://uncpjndo:w77Ebc0h2A@au1.cactussstp.com:8080",
+    "http://purevpn0s2232045:hww8fqbr72j0@px051003.pointtoserver.com:10780",
+    "http://hughmuir2:lisamarie11@us6.cactussstp.com:3129",
+    "http://purevpn0s11340994:ak3t35fp@px043006.pointtoserver.com:10780",
+    "http://purevpn0s551451:9dpdlc2nfxgj@px420602.pointtoserver.com:10780",
+    "http://purevpn0s7397024:6CU9ZvexLGTqpB@px040805.pointtoserver.com:10780",
+    "http://hughmuir2:lisamarie11@uk2.cactussstp.com:8080",
+    "http://g2rTXpNfPdcw2fzGtWKp62yH:nizar1elad2@ca-mon.pvdata.host:8080",
+    "http://g2rTXpNfPdcw2fzGtWKp62yH:nizar1elad2@se-got.pvdata.host:8080",
+    "http://g2rTXpNfPdcw2fzGtWKp62yH:nizar1elad2@id-jak.pvdata.host:8080"
+]
+
+USER_AGENTS = [
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
 ]
 
 BIOS = [
-    "Digital Creator | Content & Lifestyle ✨",
-    "📸 Content Creator | DM for Collabs",
-    "Living my best life 🌟 | USA",
-    "Creator & Influencer | Business DMs Open",
-    "Just vibing 🎯 | Content & Lifestyle",
+    "Digital Creator | Content & Lifestyle",
+    "📸 Creator | Business Inquiries Below",
+    "Official Page | Creator & Influencer",
+    "Content Creator | Collab? DM me",
 ]
 
-MEDIA_DIR     = "user_media"
-SESSION_DIR   = "ig_sessions"
-ACCOUNTS_FILE = "ig_accounts.txt"
-
-os.makedirs(MEDIA_DIR,   exist_ok=True)
+MEDIA_DIR = "user_media"
+SESSION_DIR = "ig_sessions"
+os.makedirs(MEDIA_DIR, exist_ok=True)
 os.makedirs(SESSION_DIR, exist_ok=True)
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s | %(levelname)s | %(message)s"
-)
+logging.basicConfig(level=logging.INFO)
 log = logging.getLogger(__name__)
 
-# ═══════════════════════════════════════
-#  HELPERS
-# ═══════════════════════════════════════
+async def filter_live_proxies():
+    global PROXIES
+    if not PROXIES:
+        return
+    log.info("🔍 Proxies check ki ja rahi hain...")
+    valid_proxies = []
+    for proxy in PROXIES:
+        try:
+            async with httpx.AsyncClient(proxies={"http://": proxy, "https://": proxy}, timeout=7.0) as client:
+                r = await client.get("https://httpbin.org/ip")
+                if r.status_code == 200:
+                    valid_proxies.append(proxy)
+        except Exception:
+            pass
+    PROXIES = valid_proxies
+    log.info(f"✨ Total Live Proxies: {len(PROXIES)}")
 
 def rnd_username() -> str:
-    prefix = random.choice(["the","its","real","im","just","only","hey"])
+    prefix = random.choice(["the","its","real","im","just"])
     core   = ''.join(random.choices(string.ascii_lowercase, k=random.randint(5,8)))
-    num    = str(random.randint(10, 9999))
-    return f"{prefix}_{core}{num}"
+    suffix = str(random.randint(10, 999))
+    return f"{prefix}_{core}{suffix}"
 
-def rnd_password(n=14) -> str:
-    chars = string.ascii_letters + string.digits + "!@#$"
-    pwd   = (
-        random.choice(string.ascii_uppercase) +
-        random.choice(string.digits) +
-        random.choice("!@#$") +
-        ''.join(random.choices(chars, k=n-3))
-    )
-    return ''.join(random.sample(pwd, len(pwd)))
+def rnd_password(length=14) -> str:
+    return ''.join(random.choices(string.ascii_letters + string.digits + "!@#$%", k=length))
 
 def rnd_name() -> str:
-    first = random.choice([
-        "Alex","Jordan","Riley","Morgan","Casey",
-        "Drew","Quinn","Sam","Chris","Taylor",
-        "Jamie","Blake","Avery","Logan","Parker"
-    ])
-    last = random.choice([
-        "Smith","Rivera","Chen","Patel","Moore",
-        "Garcia","Kim","Hassan","Brown","Lee",
-        "Wilson","Davis","Martin","Anderson","Thomas"
-    ])
+    first = random.choice(["Alex","Jordan","Riley","Morgan","Casey","Drew","Quinn","Sam"])
+    last  = random.choice(["Smith","Rivera","Chen","Patel","Moore","Garcia","Kim","Hassan"])
     return f"{first} {last}"
 
-def rnd_bday() -> dict:
+def rnd_birthday() -> dict:
     return {
-        "day":   random.randint(1, 28),
-        "month": random.randint(1, 12),
-        "year":  random.randint(1990, 2002),
+        "month": str(random.randint(1, 12)),
+        "day":   str(random.randint(1, 28)),
+        "year":  str(random.randint(1990, 2000)),
     }
 
-def e164(phone: str) -> str:
-    digits = re.sub(r'\D', '', phone)
-    if len(digits) == 10:
-        digits = "1" + digits
-    return f"+{digits}"
+def get_proxy_for_playwright():
+    if not PROXIES:
+        return None
+    proxy_url = random.choice(PROXIES)
+    parsed = urlparse(proxy_url)
+    if parsed.username and parsed.password:
+        server = f"{parsed.scheme}://{parsed.hostname}:{parsed.port}"
+        return {
+            "server": server,
+            "username": parsed.username,
+            "password": parsed.password
+        }
+    else:
+        return {"server": proxy_url}
 
-def get_proxy() -> str | None:
-    return random.choice(PROXIES) if PROXIES else None
+def get_ua() -> str:
+    return random.choice(USER_AGENTS)
+
+async def save_to_file(creds: dict):
+    filename = "ig_accounts.txt"
+    def _write():
+        index = 1
+        if os.path.exists(filename):
+            with open(filename, "r", encoding="utf-8") as f:
+                content = f.read()
+                index = content.count("--- Account #") + 1
+
+        live_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        with open(filename, "a", encoding="utf-8") as f:
+            f.write(f"--- Account #{index} ---\n")
+            f.write(f"Email: {creds['email']}\n")
+            f.write(f"Password: {creds['password']}\n")
+            f.write(f"Username: @{creds['username']}\n")
+            f.write(f"Phone: {creds['phone']}\n")
+            f.write(f"Bio: {creds['bio']}\n")
+            f.write(f"2FA Status: {creds.get('two_fa_status', 'Not Enabled')}\n")
+            f.write(f"2FA Secret Key: {creds.get('two_fa_key', 'N/A')}\n")
+            f.write(f"Session File: {creds.get('session_file', 'N/A')}\n")
+            f.write(f"Live Date & Time: {live_time}\n")
+            f.write(f"-----------------------\n\n")
+    await asyncio.to_thread(_write)
 
 def get_local_media() -> list:
     if not os.path.exists(MEDIA_DIR):
         return []
-    return sorted([
-        os.path.join(MEDIA_DIR, f)
-        for f in os.listdir(MEDIA_DIR)
-        if f.lower().endswith(("jpg","jpeg","png"))
-    ])
+    files = [os.path.join(MEDIA_DIR, f) for f in os.listdir(MEDIA_DIR) if f.lower().endswith(('png', 'jpg', 'jpeg'))]
+    files.sort()
+    return files
 
-async def save_account(creds: dict):
-    def _w():
-        idx = 1
-        if os.path.exists(ACCOUNTS_FILE):
-            with open(ACCOUNTS_FILE, "r", encoding="utf-8") as f:
-                idx = f.read().count("╔══") + 1
-        ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        entry = (
-            f"\n╔══ Account #{idx} ══════════════════════╗\n"
-            f"║  Username  : @{creds['username']}\n"
-            f"║  Password  : {creds['password']}\n"
-            f"║  Phone     : {creds['phone']}\n"
-            f"║  Name      : {creds['name']}\n"
-            f"║  User ID   : {creds.get('user_id','N/A')}\n"
-            f"║  2FA Key   : {creds.get('totp_secret','N/A')}\n"
-            f"║  Session   : {creds.get('session_file','N/A')}\n"
-            f"║  Created   : {ts}\n"
-            f"╚════════════════════════════════════════╝\n"
-        )
-        with open(ACCOUNTS_FILE, "a", encoding="utf-8") as f:
-            f.write(entry)
-    await asyncio.to_thread(_w)
+async def solve_captcha_if_present(page) -> bool:
+    try:
+        captcha_elem = await page.query_selector('.g-recaptcha, iframe[src*="recaptcha"]')
+        if not captcha_elem:
+            return False
+        log.info("🧩 Captcha detect hua! 2Captcha se solve kar rahe hain...")
+        sitekey = await page.evaluate('''() => {
+            const elem = document.querySelector('.g-recaptcha') || document.querySelector('iframe[src*="recaptcha"]');
+            if (!elem) return null;
+            if (elem.dataset && elem.dataset.sitekey) return elem.dataset.sitekey;
+            const src = elem.src || '';
+            const match = src.match(/k=([^&]+)/);
+            return match ? match[1] : null;
+        }''')
+        if not sitekey:
+            return False
+        solver = TwoCaptcha(CONFIG["twocaptcha_key"])
+        result = await asyncio.to_thread(solver.recaptcha, sitekey=sitekey, url=page.url)
+        code = result.get('code')
+        if code:
+            await page.evaluate(f'''() => {{
+                const textarea = document.querySelector('#g-recaptcha-response') || document.querySelector('[name="g-recaptcha-response"]');
+                if (textarea) {{
+                    textarea.value = `{code}`;
+                    textarea.style.display = 'block';
+                }}
+            }}''')
+            await asyncio.sleep(2)
+            return True
+    except Exception:
+        pass
+    return False
 
-# ═══════════════════════════════════════
-#  5SIM
-# ═══════════════════════════════════════
-
-class FiveSim:
-    BASE = "https://5sim.net/v1"
-
+class MailTM:
+    BASE = "https://api.mail.tm"
     def __init__(self):
-        self.hdrs     = {
-            "Authorization": f"Bearer {FIVESIM_KEY}",
-            "Accept":        "application/json",
-        }
-        self.order_id = None
-        self.phone    = None
+        self.email = None
+        self.password = None
+        self.token = None
 
-    async def buy(self) -> str | None:
-        url = f"{self.BASE}/user/buy/activation/{COUNTRY}/{OPERATOR}/instagram"
-        try:
-            async with httpx.AsyncClient(timeout=20) as c:
-                r    = await c.get(url, headers=self.hdrs)
-                data = r.json()
-            if "id" not in data:
-                log.error(f"5sim: number nahi mila → {data}")
-                return None
-            self.order_id = data["id"]
-            self.phone    = data["phone"]
-            log.info(f"📱 Number: {self.phone} | Order: {self.order_id}")
-            return self.phone
-        except Exception as e:
-            log.error(f"5sim buy error: {e}")
-            return None
+    async def create(self) -> str:
+        async with httpx.AsyncClient(timeout=20) as c:
+            r = await c.get(f"{self.BASE}/domains")
+            domain = r.json()["hydra:member"][0]["domain"]
+            user = ''.join(random.choices(string.ascii_lowercase + string.digits, k=12))
+            self.email = f"{user}@{domain}"
+            self.password = ''.join(random.choices(string.ascii_letters + string.digits, k=12))
+            await c.post(f"{self.BASE}/accounts", json={"address": self.email, "password": self.password})
+            r = await c.post(f"{self.BASE}/token", json={"address": self.email, "password": self.password})
+            self.token = r.json().get("token")
+        return self.email
 
-    async def wait_otp(self, timeout=180) -> str | None:
+    async def wait_code(self, timeout=120) -> str | None:
+        headers = {"Authorization": f"Bearer {self.token}"}
         deadline = time.time() + timeout
-        log.info(f"⏳ OTP wait ({timeout}s max)...")
         async with httpx.AsyncClient(timeout=20) as c:
             while time.time() < deadline:
                 try:
-                    r    = await c.get(
-                        f"{self.BASE}/user/check/{self.order_id}",
-                        headers=self.hdrs
-                    )
-                    data = r.json()
-                    st   = data.get("status", "")
-
-                    if st in ("RECEIVED", "FINISHED"):
-                        sms_list = data.get("sms", [])
-                        if sms_list:
-                            text  = sms_list[-1].get("text", "")
-                            match = re.search(r'\b(\d{6})\b', text)
-                            if match:
-                                otp = match.group(1)
-                                log.info(f"✅ OTP: {otp}")
-                                return otp
-
-                    elif st == "CANCELED":
-                        log.warning("5sim ne number cancel kar diya.")
-                        return None
-
-                except Exception as e:
-                    log.debug(f"OTP check: {e}")
-
+                    r = await c.get(f"{self.BASE}/messages", headers=headers)
+                    msgs = r.json().get("hydra:member", [])
+                    for msg in msgs:
+                        d = await c.get(f"{self.BASE}/messages/{msg['id']}", headers=headers)
+                        body = d.json().get("text","") + d.json().get("html","")
+                        match = re.search(r'\b(\d{6})\b', body)
+                        if match:
+                            return match.group(1)
+                except Exception:
+                    pass
                 await asyncio.sleep(5)
+        return None
 
-        log.warning("OTP timeout.")
+class FiveSim:
+    BASE = "https://5sim.net/v1"
+    def __init__(self):
+        self.headers = {"Authorization": f"Bearer {CONFIG['fivesim_key']}", "Accept": "application/json"}
+        self.order_id = None
+        self.phone = None
+
+    async def buy(self) -> str | None:
+        country = CONFIG.get("country", "usa")
+        operator = CONFIG.get("operator", "any")
+        async with httpx.AsyncClient(timeout=20) as c:
+            url = f"{self.BASE}/user/buy/activation/{country}/{operator}/instagram"
+            r = await c.get(url, headers=self.headers)
+            try:
+                data = r.json()
+            except Exception:
+                return None
+            if "id" not in data:
+                return None
+            self.order_id = data.get("id")
+            self.phone = data.get("phone")
+        return self.phone
+
+    async def wait_sms(self, timeout=120) -> str | None:
+        deadline = time.time() + timeout
+        async with httpx.AsyncClient(timeout=20) as c:
+            while time.time() < deadline:
+                try:
+                    url = f"{self.BASE}/user/check/{self.order_id}"
+                    r = await c.get(url, headers=self.headers)
+                    data = r.json()
+                    if data.get("status") == "RECEIVED":
+                        sms = data.get("sms", [{}])
+                        text = sms[0].get("text", "") if sms else ""
+                        match = re.search(r'\b(\d{6})\b', text)
+                        if match:
+                            return match.group(1)
+                except Exception:
+                    pass
+                await asyncio.sleep(5)
         return None
 
     async def cancel(self):
         if not self.order_id:
             return
-        try:
-            async with httpx.AsyncClient(timeout=10) as c:
-                await c.get(
-                    f"{self.BASE}/user/cancel/{self.order_id}",
-                    headers=self.hdrs
-                )
-            log.info(f"Order {self.order_id} cancel.")
-        except Exception:
-            pass
-
-    async def finish(self):
-        if not self.order_id:
-            return
-        try:
-            async with httpx.AsyncClient(timeout=10) as c:
-                await c.get(
-                    f"{self.BASE}/user/finish/{self.order_id}",
-                    headers=self.hdrs
-                )
-        except Exception:
-            pass
-
-# ═══════════════════════════════════════
-#  INSTAGRAPI WRAPPER
-# ═══════════════════════════════════════
-
-class IGCreator:
-    """
-    instagrapi se account create karo.
-    Yeh library saari cheez internally handle karti hai:
-    - Password encryption
-    - Device fingerprint
-    - Challenge / checkpoint
-    - Session management
-    """
-
-    def __init__(self, proxy: str | None = None):
-        self.proxy = proxy
-        self.cl    = Client()
-
-        # Proxy set karo
-        if proxy:
-            self.cl.set_proxy(proxy)
-
-        # Random device settings
-        self.cl.set_locale("en_US")
-        self.cl.set_timezone_offset(-18000)  # US Eastern
-
-        # Custom delay — human jaisa lag e
-        self.cl.delay_range = [2, 5]
-
-    async def register(
-        self,
-        phone:    str,
-        otp:      str,
-        username: str,
-        password: str,
-        name:     str,
-        bday:     dict,
-    ) -> dict | None:
-        """Phone number se account register karo."""
-
-        def _register():
-            return self.cl.phone_register(
-                phone=e164(phone),
-                code=otp,
-                username=username,
-                password=password,
-                first_name=name,
-                year=bday["year"],
-                month=bday["month"],
-                day=bday["day"],
-            )
-
-        try:
-            result = await asyncio.to_thread(_register)
-            if result:
-                log.info(f"✅ Account created: @{username} | ID: {self.cl.user_id}")
-                return {
-                    "user_id":  str(self.cl.user_id),
-                    "username": username,
-                    "session":  self.cl.get_settings(),
-                }
-        except ChallengeRequired as e:
-            log.warning(f"Challenge required: {e}")
-            # instagrapi apna challenge handler use karta hai
-            # manually resolve karo
+        async with httpx.AsyncClient(timeout=10) as c:
             try:
-                resolved = await asyncio.to_thread(
-                    self.cl.challenge_resolve, self.cl.last_json
-                )
-                if resolved:
-                    return {
-                        "user_id":  str(self.cl.user_id),
-                        "username": username,
-                        "session":  self.cl.get_settings(),
-                    }
-            except Exception as ce:
-                log.error(f"Challenge resolve fail: {ce}")
-        except Exception as e:
-            log.error(f"Register error: {e}")
-
-        return None
-
-    async def set_bio(self, bio: str):
-        try:
-            def _set():
-                self.cl.account_edit(biography=bio)
-            await asyncio.to_thread(_set)
-            log.info(f"Bio set: {bio}")
-        except Exception as e:
-            log.debug(f"Bio error: {e}")
-
-    async def set_profile_pic(self, image_path: str):
-        try:
-            def _set():
-                self.cl.account_change_picture(image_path)
-            await asyncio.to_thread(_set)
-            log.info(f"Profile pic set: {image_path}")
-        except Exception as e:
-            log.debug(f"Profile pic error: {e}")
-
-    async def upload_post(self, image_path: str, caption: str = ""):
-        try:
-            def _upload():
-                self.cl.photo_upload(image_path, caption=caption)
-            await asyncio.to_thread(_upload)
-            log.info(f"Post uploaded: {image_path}")
-            return True
-        except Exception as e:
-            log.debug(f"Post upload error: {e}")
-            return False
-
-    async def enable_2fa(self) -> tuple[bool, str]:
-        """TOTP 2FA enable karo."""
-        try:
-            def _enable():
-                # TOTP seed generate karo
-                seed_data = self.cl.totp_generate_seed()
-                seed      = seed_data.get("seed", "")
-                if not seed:
-                    return False, ""
-
-                # OTP banao
-                totp = pyotp.TOTP(seed)
-                code = totp.now()
-
-                # Enable karo
-                self.cl.totp_enable(code)
-                return True, seed
-
-            ok, secret = await asyncio.to_thread(_enable)
-            if ok:
-                log.info(f"🔒 2FA enabled! Secret: {secret}")
-            return ok, secret
-
-        except Exception as e:
-            log.debug(f"2FA error: {e}")
-            return False, ""
-
-    def save_session(self, username: str) -> str:
-        path = os.path.join(SESSION_DIR, f"{username}.json")
-        settings = self.cl.get_settings()
-        with open(path, "w") as f:
-            json.dump(settings, f, indent=2)
-        return path
-
-# ═══════════════════════════════════════
-#  PROXY CHECKER
-# ═══════════════════════════════════════
-
-async def check_proxies():
-    global PROXIES
-    if not PROXIES:
-        return
-    log.info(f"🔍 {len(PROXIES)} proxies check ho rahi hain...")
-    good = []
-    sem  = asyncio.Semaphore(10)
-
-    async def chk(p):
-        async with sem:
-            try:
-                prx = {"http://": p, "https://": p}
-                async with httpx.AsyncClient(proxies=prx, timeout=8) as c:
-                    r = await c.get("https://httpbin.org/ip")
-                    if r.status_code == 200:
-                        good.append(p)
-                        log.info(f"✅ {p}")
+                url = f"{self.BASE}/user/cancel/{self.order_id}"
+                await c.get(url, headers=self.headers)
             except Exception:
-                log.debug(f"❌ {p}")
+                pass
 
-    await asyncio.gather(*[chk(p) for p in PROXIES])
-    PROXIES = good if good else PROXIES  # Sab fail ho toh original rakh
-    log.info(f"✅ Live proxies: {len(PROXIES)}")
+async def human_type(page, selector: str, text: str):
+    await page.click(selector)
+    for ch in text:
+        await page.keyboard.type(ch, delay=random.randint(60, 200))
+    await asyncio.sleep(random.uniform(0.3, 0.8))
 
-# ═══════════════════════════════════════
-#  MAIN CREATOR FLOW
-# ═══════════════════════════════════════
+async def field_ok(page, selector: str, timeout=60000) -> bool:
+    try:
+        await page.wait_for_selector(selector, timeout=timeout)
+        return True
+    except Exception:
+        return False
 
-async def create_account(status_cb=None) -> dict | None:
+async def upload_posts_to_ig(page, image_paths: list, status_cb):
+    if not image_paths:
+        return
+    for idx, img_path in enumerate(image_paths, start=1):
+        try:
+            await status_cb(f"📤 Post {idx}/{len(image_paths)} upload ho rahi hai...")
+            await page.goto("https://www.instagram.com/", wait_until="domcontentloaded", timeout=60000)
+            await asyncio.sleep(3)
+            create_btn = await page.query_selector('svg[aria-label="New Post"], span:has-text("Create")')
+            if create_btn:
+                await create_btn.click()
+                await asyncio.sleep(2)
+                file_input = await page.query_selector('input[type="file"]')
+                if file_input:
+                    await file_input.set_input_files(img_path)
+                    await asyncio.sleep(3)
+                    for _ in range(3):
+                        next_btn = await page.query_selector('button:has-text("Next"), button:has-text("Share")')
+                        if next_btn:
+                            await next_btn.click()
+                            await asyncio.sleep(3)
+                    await status_cb(f"✅ Post {idx} successfully publish ho gayi!")
+                    await asyncio.sleep(5)
+        except Exception as e:
+            await status_cb(f"⚠️ Post {idx} upload fail: {e}")
 
-    async def st(msg: str):
+async def enable_authenticator_2fa(page, status_cb) -> tuple[bool, str]:
+    await status_cb("🔒 Authenticator App 2FA enable ki ja rahi hai...")
+    try:
+        await page.goto("https://www.instagram.com/accounts/security_privacy/", wait_until="domcontentloaded", timeout=60000)
+        await asyncio.sleep(3)
+        two_fa_link = await page.query_selector('a[href*="two_factor"]')
+        if two_fa_link:
+            await two_fa_link.click()
+            await asyncio.sleep(2)
+            app_radio = await page.query_selector('input[value="TOTP"], span:has-text("Authentication app")')
+            if app_radio:
+                await app_radio.click()
+                await asyncio.sleep(1.5)
+                next_btn = await page.query_selector('button:has-text("Next")')
+                if next_btn:
+                    await next_btn.click()
+                    await asyncio.sleep(3)
+                    manual_setup = await page.query_selector('span:has-text("Can\'t scan"), button:has-text("setup manually")')
+                    if manual_setup:
+                        await manual_setup.click()
+                        await asyncio.sleep(2)
+                    secret_elem = await page.query_selector('code, span[class*="key"]')
+                    secret_key = ""
+                    if secret_elem:
+                        secret_key = await secret_elem.inner_text()
+                        secret_key = secret_key.strip().replace(" ", "")
+                    else:
+                        body_text = await page.inner_text("body")
+                        match = re.search(r'\b([A-Z2-7]{16,32})\b', body_text)
+                        if match:
+                            secret_key = match.group(1)
+                    if secret_key:
+                        totp = pyotp.TOTP(secret_key)
+                        current_otp = totp.now()
+                        next_btn2 = await page.query_selector('button:has-text("Next")')
+                        if next_btn2:
+                            await next_btn2.click()
+                            await asyncio.sleep(2)
+                        otp_input = await page.query_selector('input[name="verificationCode"], input[type="text"]')
+                        if otp_input:
+                            await otp_input.click()
+                            for ch in current_otp:
+                                await page.keyboard.type(ch, delay=random.randint(50, 150))
+                            await asyncio.sleep(1)
+                            confirm_btn = await page.query_selector('button:has-text("Confirm"), button:has-text("Next"), button[type="submit"]')
+                            if confirm_btn:
+                                await confirm_btn.click()
+                                await asyncio.sleep(3)
+                                return True, secret_key
+        return False, "N/A"
+    except Exception:
+        return False, "N/A"
+
+async def create_ig_account(status_cb=None) -> dict | None:
+    async def status(msg: str):
         log.info(msg)
         if status_cb:
-            try:
-                await status_cb(msg)
-            except Exception:
-                pass
+            await status_cb(f"⚙️ {msg}")
 
-    for attempt in range(1, MAX_RETRY + 1):
+    max_retries = CONFIG.get("max_retries", 3)
+    
+    for attempt in range(1, max_retries + 1):
+        mail = MailTM()
         sms = FiveSim()
-        ig  = None
-
+        browser = None
+        
         try:
-            await st(f"🔄 Attempt {attempt}/{MAX_RETRY}...")
+            await status(f"🔄 Attempt {attempt}/{max_retries} shuru ho raha hai...")
+            
+            await status("📧 Temp email create ho rahi hai...")
+            email = await mail.create()
 
-            # ── Step 1: Number kharido ──────────────────
-            await st("📱 USA number kharida ja raha hai...")
+            await status(f"📱 {CONFIG['country'].upper()} ka phone number kharida ja raha hai...")
             phone = await sms.buy()
             if not phone:
-                await st("❌ Number nahi mila. Retry...")
-                await asyncio.sleep(8)
+                await status("❌ Phone number allocate nahi ho saka, retry...")
                 continue
 
-            # ── Step 2: Creds generate karo ────────────
-            username = rnd_username()
-            password = rnd_password()
-            name     = rnd_name()
-            bday     = rnd_bday()
+            media_files = get_local_media()
+            profile_pic = media_files[0] if media_files else None
+            post_images = media_files
 
-            await st(f"👤 Account details ready → @{username}")
-
-            # ── Step 3: IG client banao ─────────────────
-            proxy = get_proxy()
-            ig    = IGCreator(proxy=proxy)
-            log.info(f"🌐 Proxy: {proxy or 'Direct'}")
-
-            # ── Step 4: OTP ka wait karo ────────────────
-            await st(f"📤 OTP Instagram bhej raha hai → {e164(phone)}")
-            # instagrapi phone_register internally SMS bhejta hai
-            # Isliye pehle 5sim pe OTP wait shuru karte hain
-
-            await st("⏳ OTP aa raha hai... (3 minute max)")
-            otp = await sms.wait_otp(timeout=180)
-
-            if not otp:
-                await st("❌ OTP nahi aaya. Number cancel ho raha hai...")
-                await sms.cancel()
-                await asyncio.sleep(10)
-                continue
-
-            await st(f"✅ OTP mila: {otp}")
-            await asyncio.sleep(2)
-
-            # ── Step 5: Account register karo ──────────
-            await st(f"🎯 Account create ho raha hai → @{username}")
-
-            session = await ig.register(
-                phone=phone,
-                otp=otp,
-                username=username,
-                password=password,
-                name=name,
-                bday=bday,
-            )
-
-            if not session:
-                await st("❌ Account create nahi hua. Retry...")
-                await sms.cancel()
-                await asyncio.sleep(12)
-                continue
-
-            # ── Step 6: Number finish karo ──────────────
-            await sms.finish()
-            await asyncio.sleep(3)
-
-            # ── Step 7: Bio set karo ────────────────────
-            await st("📝 Bio set ho rahi hai...")
-            bio = random.choice(BIOS)
-            await ig.set_bio(bio)
-            await asyncio.sleep(2)
-
-            # ── Step 8: Profile pic (agar hai) ──────────
-            media = get_local_media()
-            if media:
-                await st("🖼️ Profile picture set ho rahi hai...")
-                await ig.set_profile_pic(media[0])
-                await asyncio.sleep(3)
-
-            # ── Step 9: Posts upload ─────────────────────
-            if len(media) > 1:
-                for idx, img in enumerate(media[1:], 1):
-                    await st(f"📤 Post {idx}/{len(media)-1} upload ho rahi hai...")
-                    await ig.upload_post(img, caption=bio)
-                    await asyncio.sleep(random.uniform(5, 10))
-
-            # ── Step 10: 2FA enable ──────────────────────
-            await st("🔒 2FA enable ho raha hai...")
-            await asyncio.sleep(2)
-            fa_ok, fa_secret = await ig.enable_2fa()
-
-            # ── Step 11: Session save ────────────────────
-            session_file = await asyncio.to_thread(ig.save_session, username)
-
-            # ── Done! ────────────────────────────────────
             creds = {
-                "username":     username,
-                "password":     password,
-                "phone":        phone,
-                "name":         name,
-                "user_id":      session.get("user_id", ""),
-                "totp_secret":  fa_secret if fa_ok else "N/A",
-                "session_file": session_file,
+                "email":         email,
+                "phone":         phone,
+                "username":      rnd_username(),
+                "password":      rnd_password(),
+                "name":          rnd_name(),
+                "birthday":      rnd_birthday(),
+                "bio":           random.choice(BIOS),
+                "two_fa_status": "Not Enabled",
+                "two_fa_key":    "N/A",
+                "session_file":  "N/A"
             }
 
-            await save_account(creds)
-            await st(f"🎉 Account ready! @{username}")
+            async with async_playwright() as p:
+                browser = await p.chromium.launch(
+                    headless=CONFIG["headless"],
+                    proxy=get_proxy_for_playwright(),
+                    args=[
+                        "--no-sandbox",
+                        "--disable-setuid-sandbox",
+                        "--disable-infobars",
+                        "--disable-dev-shm-usage",
+                        "--disable-accelerated-2d-canvas",
+                        "--no-first-run",
+                        "--no-zygote",
+                        "--single-process",
+                        "--disable-gpu",
+                        "--window-size=1280,800",
+                        "--disable-blink-features=AutomationControlled"
+                    ]
+                )
+                ctx = await browser.new_context(
+                    user_agent=get_ua(),
+                    viewport={"width": 1280, "height": 800},
+                    locale="en-US"
+                )
+                await ctx.add_init_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined});")
+                page = await ctx.new_page()
+
+                try:
+                    await status("🌐 Instagram signup page khul rahi hai...")
+                    await page.goto("https://www.instagram.com/accounts/emailsignup/", wait_until="domcontentloaded", timeout=60000)
+                    await asyncio.sleep(5)
+
+                    await page.wait_for_selector('input[name="emailOrPhone"], input[name="email"], input[type="text"]', timeout=60000)
+
+                    await human_type(page, 'input[name="emailOrPhone"], input[name="email"], input[type="text"]', creds["email"])
+                    await human_type(page, 'input[name="fullName"], input[aria-label*="Full Name"]', creds["name"])
+                    await human_type(page, 'input[name="username"], input[aria-label*="Username"]', creds["username"])
+                    await human_type(page, 'input[name="password"], input[aria-label*="Password"]', creds["password"])
+                    
+                    await page.click('button[type="submit"]')
+                    await asyncio.sleep(3)
+
+                    await solve_captcha_if_present(page)
+
+                    try:
+                        bday = creds["birthday"]
+                        if await field_ok(page, 'select[title="Month:"]', timeout=60000):
+                            await page.select_option('select[title="Month:"]', bday["month"])
+                            await page.select_option('select[title="Day:"]',   bday["day"])
+                            await page.select_option('select[title="Year:"]',  bday["year"])
+                            await page.click('button[type="submit"]')
+                            await asyncio.sleep(3)
+                    except Exception:
+                        pass
+
+                    if await field_ok(page, 'input[name="email_confirmation_code"]', timeout=60000):
+                        await status("📬 Email confirmation code ka intezar hai...")
+                        code = await mail.wait_code(timeout=120)
+                        if code:
+                            await human_type(page, 'input[name="email_confirmation_code"]', code)
+                            await page.click('button[type="submit"]')
+                            await asyncio.sleep(3)
+
+                    if await field_ok(page, 'input[name="phone_number"]', timeout=60000):
+                        await human_type(page, 'input[name="phone_number"]', creds["phone"])
+                        await page.click('button[type="submit"]')
+                        await asyncio.sleep(2)
+                        
+                        await status("📩 SMS verification code ka intezar hai...")
+                        sms_code = await sms.wait_sms(timeout=120)
+                        if sms_code:
+                            await human_type(page, 'input[name="verification_code"]', sms_code)
+                            await page.click('button[type="submit"]')
+                            await asyncio.sleep(3)
+
+                    if profile_pic:
+                        await status("🖼️ Custom Profile Picture lagayi ja rahi hai...")
+                        await page.goto("https://www.instagram.com/accounts/edit/", wait_until="domcontentloaded", timeout=60000)
+                        await asyncio.sleep(2)
+                        pic_input = await page.query_selector('input[type="file"]')
+                        if pic_input:
+                            await pic_input.set_input_files(profile_pic)
+                            await asyncio.sleep(3)
+
+                    try:
+                        bio_field = await page.query_selector('textarea[name="biography"]')
+                        if bio_field:
+                            await bio_field.fill(creds["bio"])
+                            submit = await page.query_selector('button[type="submit"]')
+                            if submit:
+                                await submit.click()
+                                await asyncio.sleep(2)
+                    except Exception:
+                        pass
+
+                    if post_images:
+                        await upload_posts_to_ig(page, post_images, status)
+
+                    success_2fa, secret_key = await enable_authenticator_2fa(page, status)
+                    if success_2fa:
+                        creds["two_fa_status"] = "Enabled (Authenticator App)"
+                        creds["two_fa_key"] = secret_key
+
+                    session_filename = os.path.join(SESSION_DIR, f"{creds['username']}.json")
+                    await ctx.storage_state(path=session_filename)
+                    creds["session_file"] = session_filename
+
+                except Exception as inner_e:
+                    raise inner_e
+
+                finally:
+                    if browser:
+                        await browser.close()
+
+            await save_to_file(creds)
             return creds
 
-        except Exception as e:
-            log.error(f"Attempt {attempt} error: {e}")
-            try:
-                await sms.cancel()
-            except Exception:
-                pass
-            if attempt < MAX_RETRY:
-                wait = random.uniform(10, 20)
-                await st(f"⏳ {wait:.0f}s baad retry...")
-                await asyncio.sleep(wait)
-            else:
-                return None
-
+        except Exception as outer_e:
+            log.error(f"Critical error on attempt {attempt}: {outer_e}")
+            if browser:
+                try:
+                    await browser.close()
+                except Exception:
+                    pass
+            await sms.cancel()
+            if attempt < max_retries:
+                await asyncio.sleep(5)
+                continue
+            return None
+            
     return None
 
-# ═══════════════════════════════════════
-#  TELEGRAM BOT
-# ═══════════════════════════════════════
-
-async def cmd_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    text = (
-        "🤖 *Instagram Creator Bot*\n\n"
-        "*Commands:*\n"
-        "`/create 3` — 3 accounts banao\n"
-        "`/status`   — proxy + accounts status\n"
-        "`/clear`    — photos delete karo\n\n"
-        "*Photos:* Seedha bhejein.\n"
-        "Pehli photo = profile pic\n"
-        "Baaki = posts pe upload"
-    )
-    await update.message.reply_text(text, parse_mode="Markdown")
-
-async def cmd_status(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    photos   = len(get_local_media())
-    proxies  = len(PROXIES)
-    accounts = 0
-    if os.path.exists(ACCOUNTS_FILE):
-        with open(ACCOUNTS_FILE) as f:
-            accounts = f.read().count("╔══")
+async def start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
-        f"📊 *Bot Status*\n\n"
-        f"🖼️ Photos: `{photos}`\n"
-        f"🌐 Proxies: `{proxies}`\n"
-        f"✅ Accounts: `{accounts}`",
+        "👋 *Instagram Bulk Account Creator*\n\n"
+        "1️⃣ Bot mein apni photos bhej dein.\n"
+        "2️⃣ Phir command bhejein: `/create 3`",
         parse_mode="Markdown"
     )
 
-async def cmd_clear(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+async def handle_photos(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    photo = update.message.photo[-1]
+    file = await photo.get_file()
+    filename = os.path.join(MEDIA_DIR, f"media_{int(time.time())}_{random.randint(100,999)}.jpg")
+    await file.download_to_drive(filename)
+    total_media = len(get_local_media())
+    await update.message.reply_text(f"✅ Photo save ho gayi! Total media stored: {total_media}")
+
+async def clear_media_command(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     count = 0
     if os.path.exists(MEDIA_DIR):
         for f in os.listdir(MEDIA_DIR):
             os.remove(os.path.join(MEDIA_DIR, f))
             count += 1
-    await update.message.reply_text(f"🗑️ {count} photos delete ho gayi.")
+    await update.message.reply_text(f"🗑️ Sabhi {count} saved photos delete kar di gayi hain.")
 
-async def handle_photo(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    photo    = update.message.photo[-1]
-    file     = await photo.get_file()
-    ts       = int(time.time())
-    rnd      = random.randint(100, 999)
-    filename = os.path.join(MEDIA_DIR, f"img_{ts}_{rnd}.jpg")
-    await file.download_to_drive(filename)
-    total = len(get_local_media())
-    await update.message.reply_text(
-        f"✅ Photo save ho gayi!\n"
-        f"📸 Total photos: `{total}`",
-        parse_mode="Markdown"
-    )
-
-async def cmd_create(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    if not ctx.args:
-        await update.message.reply_text(
-            "❓ Jaise likhein: `/create 3`", parse_mode="Markdown"
-        )
-        return
-
+async def create_command(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     try:
-        count = int(ctx.args[0])
-    except ValueError:
-        await update.message.reply_text("❌ Sirf number likhein. `/create 3`", parse_mode="Markdown")
-        return
+        args = ctx.args
+        if not args:
+            await update.message.reply_text("⚠️ Kripya sankhya batayein. Jaise: `/create 3`", parse_mode="Markdown")
+            return
 
-    if count < 1 or count > 20:
-        await update.message.reply_text("❌ 1 se 20 ke beech likhein.")
-        return
+        count = int(args[0])
+        media_count = len(get_local_media())
+        if media_count == 0:
+            await update.message.reply_text("⚠️ Pehle kam se kam ek photo bot mein bhej dein!")
+            return
 
-    msg     = await update.message.reply_text(f"🚀 {count} accounts banaana shuru ho raha hai...")
-    success = 0
-    failed  = 0
+        msg = await update.message.reply_text(f"🚀 Total {count} accounts banana shuru ho raha hai...")
 
-    for i in range(1, count + 1):
+        success_count = 0
+        for i in range(1, count + 1):
+            async def status_update(text: str):
+                try:
+                    await msg.edit_text(f"[{i}/{count}] {text}")
+                except Exception:
+                    pass
 
-        async def cb(text: str, _i=i):
-            try:
-                await msg.edit_text(f"[{_i}/{count}] {text}")
-            except Exception:
-                pass
+            creds = await create_ig_account(status_cb=status_update)
+            if creds:
+                success_count += 1
+            else:
+                await asyncio.sleep(5)
 
-        creds = await create_account(status_cb=cb)
-
-        if creds:
-            success += 1
-            # Har account ka instant result bhejo
-            try:
-                result_text = (
-                    f"✅ *Account #{success} Ready!*\n\n"
-                    f"👤 `@{creds['username']}`\n"
-                    f"🔑 `{creds['password']}`\n"
-                    f"📱 `{creds['phone']}`\n"
-                    f"🔒 2FA: `{creds.get('totp_secret','N/A')}`\n"
-                    f"🆔 ID: `{creds.get('user_id','N/A')}`"
-                )
-                await update.message.reply_text(result_text, parse_mode="Markdown")
-            except Exception:
-                pass
-        else:
-            failed += 1
-
-        # Next account se pehle thoda wait
-        if i < count:
-            wait = random.uniform(8, 15)
-            await asyncio.sleep(wait)
-
-    # Final message
-    final = (
-        f"🏁 *Kaam ho gaya!*\n\n"
-        f"✅ Success: `{success}/{count}`\n"
-        f"❌ Failed: `{failed}/{count}`"
-    )
-    try:
-        await msg.edit_text(final, parse_mode="Markdown")
-    except Exception:
-        await update.message.reply_text(final, parse_mode="Markdown")
-
-    # Accounts file bhejo
-    if os.path.exists(ACCOUNTS_FILE) and success > 0:
-        try:
+        if os.path.exists("ig_accounts.txt"):
             await update.message.reply_document(
-                document=open(ACCOUNTS_FILE, "rb"),
-                caption=f"📄 {success} accounts ki poori details"
+                document=open("ig_accounts.txt", "rb"),
+                caption=f"✅ Task Complete! Total {success_count}/{count} accounts ban gaye aur file mein details saved hain."
             )
-        except Exception as e:
-            log.error(f"File send error: {e}")
+        else:
+            await update.message.reply_text("❌ Koi bhi account nahi ban saka.")
 
-# ═══════════════════════════════════════
-#  STARTUP
-# ═══════════════════════════════════════
+    except Exception as e:
+        await update.message.reply_text(f"❌ Error: {e}")
 
-async def on_start(app: Application):
-    log.info("🔍 Proxy check shuru...")
-    await check_proxies()
-    if not PROXIES:
-        log.warning("⚠️  Koi live proxy nahi mili! Direct connection chalega.")
-    log.info("🤖 Bot ready hai!")
+async def post_init(application: Application):
+    await filter_live_proxies()
 
 def main():
-    app = (
-        Application.builder()
-        .token(BOT_TOKEN)
-        .post_init(on_start)
-        .build()
-    )
-
-    app.add_handler(CommandHandler("start",  cmd_start))
-    app.add_handler(CommandHandler("status", cmd_status))
-    app.add_handler(CommandHandler("clear",  cmd_clear))
-    app.add_handler(CommandHandler("create", cmd_create))
-    app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
-
-    log.info("🤖 Bot chalu!")
-    app.run_polling(drop_pending_updates=True)
+    app = Application.builder().token(BOT_TOKEN).post_init(post_init).build()
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("clear", clear_media_command))
+    app.add_handler(CommandHandler("create", create_command))
+    app.add_handler(MessageHandler(filters.PHOTO, handle_photos))
+    
+    log.info("🤖 Bot started successfully...")
+    app.run_polling()
 
 if __name__ == "__main__":
     main()
