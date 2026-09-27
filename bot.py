@@ -515,10 +515,13 @@ async def create_ig_account(status_cb=None) -> dict | None:
                     await page.goto("https://www.instagram.com/accounts/emailsignup/", wait_until="networkidle")
                     await asyncio.sleep(3)
 
-                    await human_type(page, 'input[name="emailOrPhone"]', creds["email"])
-                    await human_type(page, 'input[name="fullName"]',     creds["name"])
-                    await human_type(page, 'input[name="username"]',     creds["username"])
-                    await human_type(page, 'input[name="password"]',     creds["password"])
+                    # Updated Fallback Selectors to fix the Timeout Issue
+                    await page.wait_for_selector('input[name="emailOrPhone"], input[name="email"]', timeout=15000)
+
+                    await human_type(page, 'input[name="emailOrPhone"], input[name="email"]', creds["email"])
+                    await human_type(page, 'input[name="fullName"], input[aria-label*="Full Name"]', creds["name"])
+                    await human_type(page, 'input[name="username"], input[aria-label*="Username"]', creds["username"])
+                    await human_type(page, 'input[name="password"], input[aria-label*="Password"]', creds["password"])
                     
                     await page.click('button[type="submit"]')
                     await asyncio.sleep(3)
