@@ -197,7 +197,14 @@ class SMSVerification:
             playwright = await async_playwright().start()
             browser = await playwright.chromium.launch(
                 headless=True,
-                args=["--no-sandbox", "--disable-blink-features=AutomationControlled"]
+                args=[
+                    "--no-sandbox",
+                    "--disable-setuid-sandbox",
+                    "--disable-dev-shm-usage",
+                    "--disable-accelerated-2d-canvas",
+                    "--disable-gpu",
+                    "--disable-blink-features=AutomationControlled"
+                ]
             )
             context = await browser.new_context(
                 user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
@@ -212,23 +219,25 @@ class SMSVerification:
             url = f"{self.FIVESIM_API}/user/buy/activation/{country.lower()}/{operator}/instagram"
             log.info("Fetching phone number from FiveSim via browser fetch...")
             
-            api_response = await page.evaluate(f"""
-                async () => {{
-                    try {{
-                        const response = await fetch("{url}", {{
+            # FIXED: Using arguments passed into page.evaluate to prevent f-string syntax errors
+            api_response = await page.evaluate(
+                """async ([targetUrl, apiKey]) => {
+                    try {
+                        const response = await fetch(targetUrl, {
                             method: "GET",
-                            headers: {{
-                                "Authorization": "Bearer {self.api_key}",
+                            headers: {
+                                "Authorization": "Bearer " + apiKey,
                                 "Accept": "application/json"
-                            }}
-                        }};
+                            }
+                        });
                         const text = await response.text();
-                        return {{ status: response.status, body: text }};
-                    }} catch (err) {{
-                        return {{ status: 500, body: err.toString() }};
-                    }}
-                }}
-            """)
+                        return { status: response.status, body: text };
+                    } catch (err) {
+                        return { status: 500, body: err.toString() };
+                    }
+                }""",
+                [url, self.api_key]
+            )
             
             if api_response["status"] == 200:
                 try:
