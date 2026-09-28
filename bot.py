@@ -187,57 +187,83 @@ class ProxyManager:
 proxy_manager = ProxyManager(RESIDENTIAL_PROXIES, DATACENTER_PROXIES)
 
 # ═══════════════════════════════════════════════════════════════════════════
-# 3. FIVESIM SMS VERIFICATION (FIXED & UPDATED)
+# 3. FIVESIM SMS VERIFICATION (PLAYWRIGHT CLOUDFLARE BYPASS)
 # ═══════════════════════════════════════════════════════════════════════════
 
 class SMSVerification:
-    """Handle SMS verification via FiveSim (v1 Path Format Fixed)"""
+    """Handle SMS verification via FiveSim using Playwright to bypass Cloudflare"""
     
     FIVESIM_API = "https://api.fivesim.net/v1"
     
     def __init__(self, api_key):
         self.api_key = api_key
-        self.client = httpx.AsyncClient(
-            headers={
-                "Authorization": f"Bearer {api_key}",
-                "Accept": "application/json"
-            },
-            follow_redirects=True
-        )
     
-    async def get_phone_number(self, country="USA", operator="any"):
-        """Get temporary phone number"""
+    async def get_phone_number(self, country="usa", operator="any"):
+        """Get temporary phone number bypassing Cloudflare via Browser"""
+        playwright = None
+        browser = None
         try:
+            playwright = await async_playwright().start()
+            browser = await playwright.chromium.launch(
+                headless=True,
+                args=["--no-sandbox", "--disable-blink-features=AutomationControlled"]
+            )
+            context = await browser.new_context(
+                user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+            )
+            
+            # Set Authorization header
+            await context.set_extra_http_headers({
+                "Authorization": f"Bearer {self.api_key}",
+                "Accept": "application/json"
+            })
+            
+            page = await context.new_page()
             url = f"{self.FIVESIM_API}/user/buy/activation/{country.lower()}/{operator}/instagram"
             
-            r = await self.client.get(url, timeout=15.0)
+            log.info("Fetching phone number from FiveSim...")
+            await page.goto(url, wait_until="networkidle", timeout=30000)
             
-            if r.status_code == 200:
-                try:
-                    data = r.json()
-                    return {
-                        "phone": data.get("phone"),
-                        "order_id": data.get("id"),
-                        "price": data.get("price"),
-                    }
-                except Exception as je:
-                    log.error(f"JSON Decode Error. Response text: {r.text}")
-                    return None
+            # Wait for Cloudflare challenge to pass
+            await asyncio.sleep(4)
             
-            log.error(f"Phone fetch failed: Status {r.status_code} - {r.text}")
+            body_text = await page.evaluate("document.body.innerText")
+            data = json.loads(body_text)
+            
+            if "phone" in data:
+                log.info(f"✅ Phone fetched: {data.get('phone')}")
+                return {
+                    "phone": data.get("phone"),
+                    "order_id": data.get("id"),
+                    "price": data.get("price"),
+                }
+            
+            log.error(f"FiveSim response error: {body_text}")
             return None
             
         except Exception as e:
             log.error(f"SMS get phone error: {e}")
             return None
+        finally:
+            if browser:
+                await browser.close()
+            if playwright:
+                await playwright.stop()
     
     async def get_sms_code(self, order_id, timeout=300):
-        """Get SMS code from order"""
+        """Get SMS code from order using httpx"""
         start_time = time.time()
+        client = httpx.AsyncClient(
+            headers={
+                "Authorization": f"Bearer {self.api_key}",
+                "Accept": "application/json"
+            },
+            follow_redirects=True
+        )
         
         while time.time() - start_time < timeout:
             try:
-                r = await self.client.get(
+                r = await client.get(
                     f"{self.FIVESIM_API}/user/check/{order_id}",
                     timeout=10.0
                 )
@@ -259,20 +285,14 @@ class SMSVerification:
                                 if match:
                                     code = match.group(1)
                                     log.info(f"✅ SMS code extracted: {code}")
+                                    await client.aclose()
                                     return code
                         elif status == "pending":
                             log.debug("Waiting for SMS...")
                         elif status == "timeout":
                             log.error("SMS timeout")
+                            await client.aclose()
                             return None
-                        
-                        # Fallback for text parsing
-                        sms_text = data.get("text", "")
-                        match = re.search(r'\b(\d{6})\b', sms_text)
-                        if match:
-                            code = match.group(1)
-                            log.info(f"✅ SMS code extracted: {code}")
-                            return code
                 
                 await asyncio.sleep(3)
                 
@@ -280,22 +300,20 @@ class SMSVerification:
                 log.debug(f"SMS check error: {e}")
                 await asyncio.sleep(3)
         
+        await client.aclose()
         log.error("SMS code retrieval timeout")
         return None
     
     async def cancel_order(self, order_id):
         """Cancel order"""
         try:
-            await self.client.get(
-                f"{self.FIVESIM_API}/user/cancel/{order_id}",
-                timeout=10.0
-            )
+            async with httpx.AsyncClient(
+                headers={"Authorization": f"Bearer {self.api_key}"},
+                follow_redirects=True
+            ) as client:
+                await client.get(f"{self.FIVESIM_API}/user/cancel/{order_id}", timeout=10.0)
         except Exception as e:
             log.debug(f"Order cancel error: {e}")
-    
-    async def close(self):
-        """Close client"""
-        await self.client.aclose()
 
 sms_handler = SMSVerification(FIVESIM_API_KEY) if FIVESIM_API_KEY else None
 
@@ -408,7 +426,7 @@ STEALTH_JS = """
 """
 
 # ═══════════════════════════════════════════════════════════════════════════
-# 6. BROWSER AUTOMATION
+# 6. BROWSER AUTOMATION (WITH PLAYWRIGHT CLEANUP)
 # ═══════════════════════════════════════════════════════════════════════════
 
 async def human_delay(min_sec=0.5, max_sec=2.0):
@@ -417,7 +435,7 @@ async def human_delay(min_sec=0.5, max_sec=2.0):
     await asyncio.sleep(delay)
 
 async def create_stealth_context(device_fp, proxy_url):
-    """Create stealth browser context"""
+    """Create stealth browser context and return playwright instance for cleanup"""
     try:
         playwright = await async_playwright().start()
         
@@ -457,11 +475,11 @@ async def create_stealth_context(device_fp, proxy_url):
         
         await context.add_init_script(STEALTH_JS)
         
-        return browser, context
+        return playwright, browser, context
         
     except Exception as e:
         log.error(f"Context creation failed: {e}")
-        return None, None
+        return None, None, None
 
 # ═══════════════════════════════════════════════════════════════════════════
 # 7. INSTAGRAM ACCOUNT CREATION (SMS ONLY)
@@ -470,6 +488,7 @@ async def create_stealth_context(device_fp, proxy_url):
 async def create_instagram_account(device_fp, proxy_url, status_cb=None, max_retries=3):
     """Create Instagram account with SMS verification only"""
     
+    playwright = None
     browser = None
     order_id = None
     
@@ -482,7 +501,7 @@ async def create_instagram_account(device_fp, proxy_url, status_cb=None, max_ret
             if status_cb:
                 await status_cb("📱 Getting phone number...")
             
-            phone_data = await sms_handler.get_phone_number(country="USA")
+            phone_data = await sms_handler.get_phone_number(country="usa")
             if not phone_data:
                 raise Exception("Failed to get phone number")
             
@@ -493,7 +512,7 @@ async def create_instagram_account(device_fp, proxy_url, status_cb=None, max_ret
                 await status_cb(f"📞 Phone: {phone}")
             
             # Create browser
-            browser, context = await create_stealth_context(device_fp, proxy_url)
+            playwright, browser, context = await create_stealth_context(device_fp, proxy_url)
             if not browser or not context:
                 raise Exception("Browser creation failed")
             
@@ -742,6 +761,11 @@ async def create_instagram_account(device_fp, proxy_url, status_cb=None, max_ret
                     await browser.close()
                 except:
                     pass
+            if playwright:
+                try:
+                    await playwright.stop()
+                except:
+                    pass
     
     return None
 
@@ -756,7 +780,7 @@ async def start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         "✅ *Features:*\n"
         "• 🎭 Device Fingerprinting\n"
         "• 🌍 Residential Proxy Rotation\n"
-        "• 📱 SMS Verification (FiveSim)\n"
+        "• 📱 SMS Verification (FiveSim + CF Bypass)\n"
         "• 🔐 CAPTCHA Solving\n"
         "• 🛡️ Anti-Detection Stealth\n"
         "• ⏱️ Human-like Delays\n\n"
