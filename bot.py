@@ -132,7 +132,7 @@ class FiveSimAPI:
                 pass
 
 # ═══════════════════════════════════════════════════════════════════════════
-# PLAYWRIGHT AUTOMATION ENGINE
+# PLAYWRIGHT AUTOMATION ENGINE (WITH PROXY AUTO-RETRY)
 # ═══════════════════════════════════════════════════════════════════════════
 
 async def run_playwright_signup(status_cb=None):
@@ -151,64 +151,69 @@ async def run_playwright_signup(status_cb=None):
     password = ''.join(random.choices(string.ascii_letters + string.digits + "!@#$", k=16))
     full_name = "Alex " + ''.join(random.choices(string.ascii_letters, k=5))
 
-    proxy_cfg = get_random_proxy_dict()
-    log.info(f"Using proxy server: {proxy_cfg.get('server')}")
+    # Try up to 3 different proxies from the pool if one fails
+    for attempt in range(3):
+        proxy_cfg = get_random_proxy_dict()
+        log.info(f"Attempt {attempt+1}: Using proxy server: {proxy_cfg.get('server')}")
 
-    async with async_playwright() as p:
-        browser = await p.chromium.launch(
-            headless=True,
-            args=["--disable-blink-features=AutomationControlled", "--no-sandbox"]
-        )
-        context = await browser.new_context(
-            proxy=proxy_cfg,
-            user_agent="Mozilla/5.0 (iPhone; CPU iPhone OS 17_4_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4.1 Mobile/15E148 Safari/604.1"
-        )
-        page = await context.new_page()
+        async with async_playwright() as p:
+            browser = await p.chromium.launch(
+                headless=True,
+                args=["--disable-blink-features=AutomationControlled", "--no-sandbox"]
+            )
+            context = await browser.new_context(
+                proxy=proxy_cfg,
+                user_agent="Mozilla/5.0 (iPhone; CPU iPhone OS 17_4_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4.1 Mobile/15E148 Safari/604.1"
+            )
+            page = await context.new_page()
 
-        try:
-            if status_cb:
-                await status_cb("🌍 Opening Instagram signup page...")
-            await page.goto("https://www.instagram.com/accounts/emailsignup/", timeout=60000)
-            await page.wait_for_load_state("networkidle")
+            try:
+                if status_cb:
+                    await status_cb(f"🌍 Opening Instagram (Proxy Attempt {attempt+1})...")
+                await page.goto("https://www.instagram.com/accounts/emailsignup/", timeout=30000)
+                await page.wait_for_load_state("networkidle")
 
-            if status_cb:
-                await status_cb("✍️ Filling registration details...")
-            
-            # Fill phone/email field
-            await page.fill('input[name="emailOrPhone"]', phone)
-            await page.fill('input[name="fullName"]', full_name)
-            await page.fill('input[name="username"]', username)
-            await page.fill('input[name="password"]', password)
+                if status_cb:
+                    await status_cb("✍️ Filling registration details...")
+                
+                await page.fill('input[name="emailOrPhone"]', phone)
+                await page.fill('input[name="fullName"]', full_name)
+                await page.fill('input[name="username"]', username)
+                await page.fill('input[name="password"]', password)
 
-            await page.click('button:has-text("Sign up")')
-            await asyncio.sleep(5)
+                await page.click('button:has-text("Sign up")')
+                await asyncio.sleep(5)
 
-            # Check if SMS code input appears
-            if status_cb:
-                await status_cb("⏳ Waiting for SMS code from FiveSim...")
-            code = await fivesim.get_sms_code(order_id)
-            if not code:
-                log.error("SMS code not received.")
-                await fivesim.cancel(order_id)
+                if status_cb:
+                    await status_cb("⏳ Waiting for SMS code from FiveSim...")
+                code = await fivesim.get_sms_code(order_id)
+                if not code:
+                    log.error("SMS code not received.")
+                    await browser.close()
+                    continue
+
+                if status_cb:
+                    await status_cb(f"🔑 Entering SMS code: {code}")
+                
+                await page.fill('input[name="confirmationCode"]', code)
+                await page.click('button:has-text("Confirm")')
+                await asyncio.sleep(5)
+
                 await browser.close()
-                return None
+                return {"username": username, "password": password, "phone": phone}
 
-            if status_cb:
-                await status_cb(f"🔑 Entering SMS code: {code}")
-            
-            # Type verification code if input field exists
-            await page.fill('input[name="confirmationCode"]', code)
-            await page.click('button:has-text("Confirm")')
-            await asyncio.sleep(5)
+            except Exception as e:
+                log.error(f"Playwright Exception on attempt {attempt+1}: {e}")
+                try:
+                    await browser.close()
+                except:
+                    pass
+                # Loop will automatically try the next random proxy
 
-            await browser.close()
-            return {"username": username, "password": password, "phone": phone}
-
-        except Exception as e:
-            log.error(f"Playwright Automation Exception: {e}")
-            await fivesim.cancel(order_id)
-            await browser.close()
-            return None
+    # If all 3 proxy attempts fail, cancel the FiveSim number
+    log.error("All proxy attempts failed. Canceling number.")
+    await fivesim.cancel(order_id)
+    return None
 
 # ═══════════════════════════════════════════════════════════════════════════
 # TELEGRAM BOT HANDLERS
@@ -237,14 +242,16 @@ async def create_command(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             parse_mode="Markdown"
         )
     else:
-        await update.message.reply_text("❌ Account creation failed. Check logs.")
+        await update.message.reply_text("❌ Account creation failed due to proxy/network error. Try again.")
 
 def main():
     app = Application.builder().token(BOT_TOKEN).build()
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("create", create_command))
     log.info("🤖 Bot polling started with Playwright stack...")
-    app.run_polling()
+    
+    # 🔥 drop_pending_updates=True prevents Conflict error
+    app.run_polling(drop_pending_updates=True)
 
 if __name__ == "__main__":
     main()
