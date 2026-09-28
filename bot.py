@@ -1,740 +1,249 @@
 import asyncio
 import random
 import string
-import hashlib
-import json
-import os
-import re
-import time
 import logging
-from datetime import datetime, timedelta
-from urllib.parse import urlparse
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import (
-    Application, 
-    CommandHandler, 
-    ContextTypes, 
-    CallbackQueryHandler, 
-    MessageHandler, 
-    filters
-)
 from playwright.async_api import async_playwright
 from twocaptcha import TwoCaptcha
 import httpx
+from telegram import Update
+from telegram.ext import Application, CommandHandler, ContextTypes
 
 # ═══════════════════════════════════════════════════════════════════════════
-# LOGGING CONFIGURATION
+# LOGGING & CONFIGURATION
 # ═══════════════════════════════════════════════════════════════════════════
 
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.FileHandler("bot_execution.log", encoding="utf-8"),
-        logging.StreamHandler()
-    ]
-)
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 log = logging.getLogger(__name__)
 
-# ═══════════════════════════════════════════════════════════════════════════
-# CONFIGURATION & SECRETS
-# ═══════════════════════════════════════════════════════════════════════════
-
 BOT_TOKEN = "8948043707:AAGDrCONfkuoydMQjHFPSAeFlouJvTv-AV0"
-CHAT_ID = "8963867689"
 TWOCAPTCHA_KEY = "6498bcd403bd611438b1fb68568355b1"
 FIVESIM_API_KEY = "eyJhbGciOiJSUzUxMiIsInR5cCI6IkpXVCJ9.eyJleHAiOjE4MjIwNTIxMDQsImlhdCI6MTc5MDUxNjEwNCwicmF5IjoiNDMzNjhkNTQ5NGNlM2YzM2UzNTYwMGE1ZGIxOTc0NWUiLCJzdWIiOjQ1NzU0ODh9.csk2R9FNfET5ZhvdjBsOpVX-lYiVTHZCPw7UYFpZcCMUhNtjWJ-BhI2vUXB4F_8kIxU1Xlm6nAg4yraJ5lW5jP9xoZHiT6bu7drW_klEBMZ6pSVak_0RjtyCE5wMXeBqnxbsijd7sYhNz9JVXzHud6Qp7Nbaqr-Xwpqz9ilycM353h8c8G2nxr7Csb8xNSOiy1KXU-5LGfa8mErxHqyRQnVsr7gXpnVlSg4sObdrXbzO17UabirAKga0C3O3_ISUD3lsZLI2QDSaFW2LU_jh5SPg6cuCZpg86_JSxAgleLEth2tdxN0_lryw-NUrGGRGSnbtHwVOM5xUeKqMlBrBrw"
 
-RESIDENTIAL_PROXIES = [
-    "http://user:pass@res-proxy-1.com:8080",
-    "http://user:pass@res-proxy-2.com:8080",
-    "http://user:pass@res-proxy-3.com:8080",
+# Proxy Pool from your list
+RAW_PROXIES = [
+    "us6.cactussstp.com:3129:uncpjndo:w77Ebc0h2A",
+    "hk1.cactussstp.com:8080:uncpjndo:w77Ebc0h2A",
+    "it1.cactussstp.com:3129:bvmbsmie:shibby2511",
+    "uk3.cactussstp.com:3129:uncpjndo:w77Ebc0h2A",
+    "in1.cactussstp.com:8080:yefprelf:dr2gsmab",
+    "au1.cactussstp.com:3129:bvmbsmie:shibby2511",
+    "lv1.cactussstp.com:81:uncpjndo:w77Ebc0h2A",
+    "us3.cactussstp.com:3129:hughmuir2:lisamarie11",
+    "ca1.cactussstp.com:81:uncpjndo:w77Ebc0h2A",
+    "ch1.cactussstp.com:8080:yefprelf:dr2gsmab",
+    "my1.cactussstp.com:81:uncpjndo:w77Ebc0h2A",
+    "px022409.pointtoserver.com:10780:purevpn0s551451:9dpdlc2nfxgj",
+    "in-ban.pvdata.host:8080:g2rTXpNfPdcw2fzGtWKp62yH:nizar1elad2",
+    "p.webshare.io:80:khanrayhan9910-rotate:Asutonu9",
+    "37.49.150.244:41731:1TCNvZkNJiZZPGX:sQfBBjZGVDqYl9V",
+    "uk2.cactussstp.com:81:uncpjndo:w77Ebc0h2A",
+    "px591801.pointtoserver.com:10780:purevpn0s551451:9dpdlc2nfxgj",
+    "px241102.pointtoserver.com:10780:purevpn0s2232045:hww8fqbr72j0",
+    "p103.squidproxies.com:9238:1401:FVRHsSXw2DNK",
+    "px022507.pointtoserver.com:10780:purevpn0s551451:9dpdlc2nfxgj",
+    "it-mil.pvdata.host:8080:g2rTXpNfPdcw2fzGtWKp62yH:nizar1elad2",
+    "px023005.pointtoserver.com:10780:reseller3270s320237:7Grp9Gki",
+    "au-per.pvdata.host:8080:g2rTXpNfPdcw2fzGtWKp62yH:nizar1elad2",
+    "px152201.pointtoserver.com:10780:purevpn0s8732217:i67s60ep",
+    "my-kua.pvdata.host:8080:g2rTXpNfPdcw2fzGtWKp62yH:nizar1elad2",
+    "px400501.pointtoserver.com:10780:purevpn0s7397024:6CU9ZvexLGTqpB",
+    "px051703.pointtoserver.com:10780:reseller3270s320237:7Grp9Gki",
+    "uk3.cactussstp.com:3129:hughmuir2:lisamarie11",
+    "sk-bra.pvdata.host:8080:g2rTXpNfPdcw2fzGtWKp62yH:nizar1elad2",
+    "px410701.pointtoserver.com:10780:purevpn0s551451:9dpdlc2nfxgj",
+    "uk3.cactussstp.com:81:bvmbsmie:shibby2511",
+    "au1.cactussstp.com:8080:uncpjndo:w77Ebc0h2A",
+    "px051003.pointtoserver.com:10780:purevpn0s2232045:hww8fqbr72j0",
+    "us6.cactussstp.com:3129:hughmuir2:lisamarie11",
+    "px043006.pointtoserver.com:10780:purevpn0s11340994:ak3t35fp",
+    "px420602.pointtoserver.com:10780:purevpn0s551451:9dpdlc2nfxgj",
+    "px040805.pointtoserver.com:10780:purevpn0s7397024:6CU9ZvexLGTqpB",
+    "uk2.cactussstp.com:8080:hughmuir2:lisamarie11",
+    "ca-mon.pvdata.host:8080:g2rTXpNfPdcw2fzGtWKp62yH:nizar1elad2",
+    "se-got.pvdata.host:8080:g2rTXpNfPdcw2fzGtWKp62yH:nizar1elad2",
+    "id-jak.pvdata.host:8080:g2rTXpNfPdcw2fzGtWKp62yH:nizar1elad2"
 ]
 
-DATACENTER_PROXIES = [
-    "http://user:pass@dc-proxy-1.com:3128",
-    "http://user:pass@dc-proxy-2.com:3128",
-]
-
-# ═══════════════════════════════════════════════════════════════════════════
-# 1. ADVANCED DEVICE FINGERPRINTING ENGINE
-# ═══════════════════════════════════════════════════════════════════════════
-
-class DeviceFingerprint:
-    """Generate high-entropy unique mobile device fingerprints to evade anti-bot detection"""
-    
-    IPHONE_DEVICES = [
-        {
-            "model": "iPhone 15 Pro",
-            "os": "iOS 17.4.1",
-            "ua": "Mozilla/5.0 (iPhone; CPU iPhone OS 17_4_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4.1 Mobile/15E148 Safari/604.1",
-            "resolution": "390x844",
-        },
-        {
-            "model": "iPhone 14",
-            "os": "iOS 16.7.8",
-            "ua": "Mozilla/5.0 (iPhone; CPU iPhone OS 16_7_8 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.6 Mobile/15E148 Safari/604.1",
-            "resolution": "390x844",
-        },
-        {
-            "model": "iPhone 13 Pro Max",
-            "os": "iOS 17.2",
-            "ua": "Mozilla/5.0 (iPhone; CPU iPhone OS 17_2 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.2 Mobile/15E148 Safari/604.1",
-            "resolution": "428x926",
-        }
-    ]
-    
-    ANDROID_DEVICES = [
-        {
-            "model": "Samsung Galaxy S24 Ultra",
-            "os": "Android 14",
-            "ua": "Mozilla/5.0 (Linux; Android 14; SM-S928B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36",
-            "resolution": "412x915",
-        },
-        {
-            "model": "Google Pixel 8 Pro",
-            "os": "Android 14",
-            "ua": "Mozilla/5.0 (Linux; Android 14; Pixel 8 Pro) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36",
-            "resolution": "480x1084",
-        },
-        {
-            "model": "OnePlus 12",
-            "os": "Android 14",
-            "ua": "Mozilla/5.0 (Linux; Android 14; CPH2581) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36",
-            "resolution": "412x932",
-        }
-    ]
-    
-    @staticmethod
-    def generate():
-        device_type = random.choice(['ios', 'android'])
-        device = random.choice(DeviceFingerprint.IPHONE_DEVICES if device_type == 'ios' else DeviceFingerprint.ANDROID_DEVICES)
-        
-        idfa = hashlib.md5(str(random.random()).encode()).hexdigest()
-        android_id = hashlib.sha256(str(random.random()).encode()).hexdigest()[:16]
-        
+def get_random_proxy_dict():
+    p = random.choice(RAW_PROXIES)
+    parts = p.split(":")
+    if len(parts) == 4:
+        host, port, user, pwd = parts
         return {
-            "device_type": device_type,
-            "model": device["model"],
-            "os": device["os"],
-            "user_agent": device["ua"],
-            "screen_resolution": device["resolution"],
-            "idfa": idfa,
-            "android_id": android_id,
-            "timezone": random.choice(["UTC", "IST", "EST", "PST", "GMT+5:30"]),
-            "language": "en_US",
-            "locale": random.choice(["en_US", "en_GB", "en_IN"]),
-            "screen_density": random.choice([2, 2.5, 3]),
+            "server": f"http://{host}:{port}",
+            "username": user,
+            "password": pwd
         }
+    elif len(parts) == 2:
+        host, port = parts
+        return {"server": f"http://{host}:{port}"}
+    return {"server": f"http://{p}"}
 
 # ═══════════════════════════════════════════════════════════════════════════
-# 2. INTELLIGENT PROXY MANAGER
+# FIVESIM API HANDLER
 # ═══════════════════════════════════════════════════════════════════════════
 
-class ProxyManager:
-    """Manages pool rotation, dead proxy blacklisting, and health checks"""
-    
-    def __init__(self, residential, datacenter):
-        self.residential = residential.copy()
-        self.datacenter = datacenter.copy()
-        self.dead_proxies = set()
-        self.last_used = {}
-    
-    async def validate_proxy(self, proxy_url):
-        try:
-            async with httpx.AsyncClient(proxy=proxy_url, timeout=7.0) as client:
-                r = await client.get("https://httpbin.org/ip", timeout=7.0)
-                return r.status_code == 200
-        except Exception:
-            return False
-    
-    async def get_residential_proxy(self):
-        available = [p for p in self.residential if p not in self.dead_proxies]
-        if not available:
-            log.warning("No residential proxies available, falling back to datacenter")
-            return await self.get_datacenter_proxy()
-        
-        available.sort(key=lambda x: self.last_used.get(x, datetime.min))
-        proxy = available[0]
-        
-        if not await self.validate_proxy(proxy):
-            self.dead_proxies.add(proxy)
-            return await self.get_residential_proxy()
-        
-        self.last_used[proxy] = datetime.now()
-        return proxy
-    
-    async def get_datacenter_proxy(self):
-        available = [p for p in self.datacenter if p not in self.dead_proxies]
-        if not available:
-            return None
-        
-        proxy = random.choice(available)
-        if not await self.validate_proxy(proxy):
-            self.dead_proxies.add(proxy)
-            return await self.get_datacenter_proxy()
-        
-        return proxy
-
-proxy_manager = ProxyManager(RESIDENTIAL_PROXIES, DATACENTER_PROXIES)
-
-# ═══════════════════════════════════════════════════════════════════════════
-# 3. FIVESIM SMS VERIFICATION (PLAYWRIGHT API REQUEST BYPASS)
-# ═══════════════════════════════════════════════════════════════════════════
-
-class SMSVerification:
-    """Handle SMS verification via FiveSim using Playwright session request context"""
-    
-    FIVESIM_API = "https://5sim.net/v1"
-    
+class FiveSimAPI:
     def __init__(self, api_key):
         self.api_key = api_key
-    
-    async def get_phone_number(self, country="usa", operator="any"):
-        playwright = None
-        browser = None
-        try:
-            playwright = await async_playwright().start()
-            browser = await playwright.chromium.launch(
-                headless=True,
-                args=[
-                    "--no-sandbox",
-                    "--disable-setuid-sandbox",
-                    "--disable-dev-shm-usage",
-                    "--disable-accelerated-2d-canvas",
-                    "--disable-gpu",
-                    "--disable-blink-features=AutomationControlled"
-                ]
-            )
-            context = await browser.new_context(
-                user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
-            )
-            
-            page = await context.new_page()
-            
-            log.info("Bypassing Cloudflare on FiveSim...")
-            await page.goto("https://5sim.net", wait_until="networkidle", timeout=30000)
-            await asyncio.sleep(3)
-            
-            url = f"{self.FIVESIM_API}/user/buy/activation/{country.lower()}/{operator}/instagram"
-            log.info("Fetching phone number from FiveSim via Playwright API request context...")
-            
-            response = await page.request.get(
-                url,
-                headers={
-                    "Authorization": f"Bearer {self.api_key}",
-                    "Accept": "application/json"
-                }
-            )
-            
-            status = response.status
-            body = await response.text()
-            
-            if status == 200:
-                try:
-                    data = json.loads(body)
-                    if "phone" in data:
-                        log.info(f"✅ Phone fetched: {data.get('phone')}")
-                        return {
-                            "phone": data.get("phone"),
-                            "order_id": data.get("id"),
-                            "price": data.get("price"),
-                        }
-                    else:
-                        log.error(f"FiveSim JSON missing phone: {body}")
-                except Exception as json_err:
-                    log.error(f"JSON parse error: {json_err} | Body: {body}")
-            else:
-                log.error(f"FiveSim API status {status}: {body}")
-            
-            return None
-            
-        except Exception as e:
-            log.error(f"SMS get phone error: {e}")
-            return None
-        finally:
-            if browser:
-                await browser.close()
-            if playwright:
-                await playwright.stop()
-    
-    async def get_sms_code(self, order_id, timeout=300):
-        start_time = time.time()
-        client = httpx.AsyncClient(
-            headers={
-                "Authorization": f"Bearer {self.api_key}",
-                "Accept": "application/json"
-            },
-            follow_redirects=True
-        )
-        
-        while time.time() - start_time < timeout:
+        self.base_url = "https://5sim.net/v1"
+
+    async def get_number(self, country="usa"):
+        url = f"{self.base_url}/user/buy/activation/{country}/any/instagram"
+        headers = {"Authorization": f"Bearer {self.api_key}", "Accept": "application/json"}
+        async with httpx.AsyncClient() as client:
             try:
-                r = await client.get(f"{self.FIVESIM_API}/user/check/{order_id}", timeout=10.0)
+                r = await client.get(url, headers=headers, timeout=15.0)
                 if r.status_code == 200:
-                    try:
+                    data = r.json()
+                    return {"phone": data.get("phone"), "order_id": data.get("id")}
+            except Exception as e:
+                log.error(f"FiveSim Error: {e}")
+        return None
+
+    async def get_sms_code(self, order_id, timeout=180):
+        url = f"https://5sim.net/v1/user/check/{order_id}"
+        headers = {"Authorization": f"Bearer {self.api_key}", "Accept": "application/json"}
+        start_time = asyncio.get_event_loop().time()
+        async with httpx.AsyncClient() as client:
+            while asyncio.get_event_loop().time() - start_time < timeout:
+                try:
+                    r = await client.get(url, headers=headers, timeout=10.0)
+                    if r.status_code == 200:
                         data = r.json()
-                    except Exception:
-                        await asyncio.sleep(3)
-                        continue
-                    
-                    if isinstance(data, dict):
-                        status = data.get("status")
-                        if status == "received":
+                        if data.get("status") == "received":
                             sms_list = data.get("sms", [])
                             if sms_list:
-                                sms_text = sms_list[0].get("text", "")
-                                match = re.search(r'\b(\d{6})\b', sms_text)
+                                text = sms_list[0].get("text", "")
+                                import re
+                                match = re.search(r'\b(\d{6})\b', text)
                                 if match:
-                                    code = match.group(1)
-                                    log.info(f"✅ SMS code extracted: {code}")
-                                    await client.aclose()
-                                    return code
-                        elif status == "timeout":
-                            log.error("SMS timeout on FiveSim")
-                            await client.aclose()
-                            return None
-                await asyncio.sleep(3)
-            except Exception as e:
-                log.debug(f"SMS check error: {e}")
-                await asyncio.sleep(3)
-        
-        await client.aclose()
+                                    return match.group(1)
+                    await asyncio.sleep(4)
+                except:
+                    await asyncio.sleep(4)
+        return None
+
+    async def cancel(self, order_id):
+        async with httpx.AsyncClient() as client:
+            try:
+                await client.get(f"https://5sim.net/v1/user/cancel/{order_id}", headers={"Authorization": f"Bearer {self.api_key}"})
+            except:
+                pass
+
+# ═══════════════════════════════════════════════════════════════════════════
+# PLAYWRIGHT AUTOMATION ENGINE
+# ═══════════════════════════════════════════════════════════════════════════
+
+async def run_playwright_signup(status_cb=None):
+    fivesim = FiveSimAPI(FIVESIM_API_KEY)
+    
+    if status_cb:
+        await status_cb("📱 Buying number from FiveSim...")
+    phone_data = await fivesim.get_number(country="usa")
+    if not phone_data:
         return None
     
-    async def cancel_order(self, order_id):
-        try:
-            async with httpx.AsyncClient(
-                headers={"Authorization": f"Bearer {self.api_key}"},
-                follow_redirects=True
-            ) as client:
-                await client.get(f"{self.FIVESIM_API}/user/cancel/{order_id}", timeout=10.0)
-        except Exception as e:
-            log.debug(f"Order cancel error: {e}")
-
-sms_handler = SMSVerification(FIVESIM_API_KEY) if FIVESIM_API_KEY else None
-
-# ═══════════════════════════════════════════════════════════════════════════
-# 4. CAPTCHA SOLVER MODULE
-# ═══════════════════════════════════════════════════════════════════════════
-
-class CaptchaSolver:
-    """Robust 2Captcha integration for hCaptcha/Recaptcha challenges"""
+    phone = phone_data["phone"]
+    order_id = phone_data["order_id"]
     
-    def __init__(self, api_key):
-        self.solver = TwoCaptcha(api_key) if api_key else None
-        self.solve_count = 0
-    
-    async def solve_hcaptcha(self, sitekey, page_url):
-        if not self.solver:
-            return None
-        try:
-            result = self.solver.hcaptcha(sitekey=sitekey, pageurl=page_url)
-            self.solve_count += 1
-            return result.get('code')
-        except Exception as e:
-            log.error(f"hCaptcha solver failed: {e}")
-            return None
+    username = f"user_{random.randint(100000, 999999)}"
+    password = ''.join(random.choices(string.ascii_letters + string.digits + "!@#$", k=16))
+    full_name = "Alex " + ''.join(random.choices(string.ascii_letters, k=5))
 
-captcha_solver = CaptchaSolver(TWOCAPTCHA_KEY)
+    proxy_cfg = get_random_proxy_dict()
+    log.info(f"Using proxy server: {proxy_cfg.get('server')}")
 
-# ═══════════════════════════════════════════════════════════════════════════
-# 5. STEALTH BROWSER AUTOMATION ENGINE
-# ═══════════════════════════════════════════════════════════════════════════
-
-STEALTH_JS = """
-    (() => {
-        Object.defineProperty(navigator, 'webdriver', {get: () => undefined});
-        delete window.cdc_adoQpoasnfa76pfcZLmcfl_Array;
-        delete window.__playwright;
-        delete window.__pwInitScripts;
-        
-        if (!window.chrome) {
-            window.chrome = {
-                app: {isInstalled: false},
-                runtime: {},
-                loadTimes: () => ({}),
-                csi: () => ({})
-            };
-        }
-    })();
-"""
-
-async def human_delay(min_sec=0.8, max_sec=2.2):
-    await asyncio.sleep(random.uniform(min_sec, max_sec))
-
-async def create_stealth_context(device_fp, proxy_url):
-    try:
-        playwright = await async_playwright().start()
-        browser = await playwright.chromium.launch(
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(
             headless=True,
-            args=[
-                "--disable-blink-features=AutomationControlled",
-                "--no-sandbox",
-                "--disable-gpu",
-                "--disable-dev-shm-usage"
-            ]
+            args=["--disable-blink-features=AutomationControlled", "--no-sandbox"]
         )
-        
-        proxy_config = None
-        if proxy_url:
-            try:
-                parsed = urlparse(proxy_url)
-                proxy_config = {
-                    "server": f"{parsed.scheme}://{parsed.hostname}:{parsed.port or 80}",
-                    "username": parsed.username,
-                    "password": parsed.password,
-                }
-            except:
-                pass
-        
-        width, height = map(int, device_fp['screen_resolution'].split('x'))
         context = await browser.new_context(
-            user_agent=device_fp['user_agent'],
-            viewport={"width": width, "height": height},
-            locale=device_fp['locale'],
-            timezone_id=device_fp['timezone'],
-            proxy=proxy_config,
-            device_scale_factor=device_fp['screen_density'],
-            has_touch=True,
-            is_mobile=True,
+            proxy=proxy_cfg,
+            user_agent="Mozilla/5.0 (iPhone; CPU iPhone OS 17_4_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4.1 Mobile/15E148 Safari/604.1"
         )
-        await context.add_init_script(STEALTH_JS)
-        return playwright, browser, context
-    except Exception as e:
-        log.error(f"Stealth context creation failed: {e}")
-        return None, None, None
+        page = await context.new_page()
 
-# ═══════════════════════════════════════════════════════════════════════════
-# 6. INSTAGRAM AUTOMATED REGISTRATION WORKFLOW (ULTIMATE FALLBACK FIX)
-# ═══════════════════════════════════════════════════════════════════════════
-
-async def create_instagram_account(device_fp, proxy_url, status_cb=None, max_retries=3):
-    playwright, browser, context, page, order_id = None, None, None, None, None
-    
-    for attempt in range(1, max_retries + 1):
         try:
             if status_cb:
-                await status_cb(f"🚀 Registration Attempt {attempt}/{max_retries}")
-                await status_cb("📱 Acquiring fresh phone number via FiveSim...")
-            
-            phone_data = await sms_handler.get_phone_number(country="usa")
-            if not phone_data:
-                raise Exception("Failed to secure phone number")
-            
-            phone = phone_data['phone']
-            order_id = phone_data['order_id']
-            
-            playwright, browser, context = await create_stealth_context(device_fp, proxy_url)
-            if not browser or not context:
-                raise Exception("Browser initialization failed")
-            
-            page = await context.new_page()
-            
-            username = f"user_{hashlib.md5(str(random.random()).encode()).hexdigest()[:8]}"
-            password = ''.join(random.choices(string.ascii_letters + string.digits + "!@#$%^&*", k=18))
-            first_name = ''.join(random.choices(string.ascii_uppercase, k=1)) + ''.join(random.choices(string.ascii_lowercase, k=6))
-            last_name = ''.join(random.choices(string.ascii_uppercase, k=1)) + ''.join(random.choices(string.ascii_lowercase, k=6))
-            dob_year = random.randint(1994, 2004)
-            dob_month = random.randint(1, 12)
-            dob_day = random.randint(1, 28)
-            
+                await status_cb("🌍 Opening Instagram signup page...")
+            await page.goto("https://www.instagram.com/accounts/emailsignup/", timeout=60000)
+            await page.wait_for_load_state("networkidle")
+
             if status_cb:
-                await status_cb("🌍 Navigating to Instagram signup portal...")
+                await status_cb("✍️ Filling registration details...")
             
-            await page.goto("https://www.instagram.com/accounts/emailsignup/", wait_until="networkidle", timeout=45000)
-            await human_delay(3, 5)
-            
-            # 1. Handle Cookie consent / Dialogs if any
-            try:
-                for btn_text in ["Accept", "Allow all cookies", "Allow", "Only allow essential cookies"]:
-                    btn = await page.query_selector(f'button:has-text("{btn_text}")')
-                    if btn:
-                        await btn.click()
-                        await human_delay(1, 2)
-                        break
-            except:
-                pass
+            # Fill phone/email field
+            await page.fill('input[name="emailOrPhone"]', phone)
+            await page.fill('input[name="fullName"]', full_name)
+            await page.fill('input[name="username"]', username)
+            await page.fill('input[name="password"]', password)
 
-            # 2. Check if Instagram asks for Birthday FIRST
-            try:
-                month_select = await page.query_selector('select[name*="month"]')
-                if month_select:
-                    log.info("ℹ️ Birthday selection appeared first, filling DOB...")
-                    await page.select_option('select[name*="month"]', str(dob_month))
-                    await page.select_option('select[name*="day"]', str(dob_day))
-                    await page.select_option('select[name*="year"]', str(dob_year))
-                    await human_delay(1, 2)
-                    
-                    next_btn = await page.query_selector('button:has-text("Next"), button[type="submit"]')
-                    if next_btn:
-                        await next_btn.click()
-                        await human_delay(3, 5)
-            except Exception as e:
-                log.debug(f"DOB step skipped or not first: {e}")
+            await page.click('button:has-text("Sign up")')
+            await asyncio.sleep(5)
 
-            # 3. Switch to Phone Mode tab if required
-            try:
-                phone_toggle = await page.query_selector('button:has-text("phone"), button:has-text("Phone"), span:has-text("phone")')
-                if phone_toggle:
-                    await phone_toggle.click()
-                    await human_delay(1, 2)
-            except:
-                pass
-            
-            # 4. Robust Phone Number / Email Field Fill with expanded fallback selectors
+            # Check if SMS code input appears
             if status_cb:
-                await status_cb("📱 Entering phone number...")
+                await status_cb("⏳ Waiting for SMS code from FiveSim...")
+            code = await fivesim.get_sms_code(order_id)
+            if not code:
+                log.error("SMS code not received.")
+                await fivesim.cancel(order_id)
+                await browser.close()
+                return None
 
-            phone_field = None
-            selectors = [
-                'input[name="mobileOrEmail"]',
-                'input[name="emailOrPhone"]',
-                'input[name="phoneOrEmail"]',
-                'input[type="tel"]',
-                'input[name*="phone"]',
-                'input[name*="email"]',
-                'input[aria-label*="Mobile"]',
-                'input[aria-label*="Phone"]',
-                'input[aria-label*="Email"]',
-                'input[data-testid*="phone"]',
-                'input[data-testid*="email"]',
-                'form input[type="text"]'
-            ]
-            
-            for sel in selectors:
-                try:
-                    phone_field = await page.wait_for_selector(sel, timeout=4000)
-                    if phone_field:
-                        log.info(f"✅ Found phone/email field using selector: {sel}")
-                        break
-                except:
-                    continue
-            
-            if not phone_field:
-                raise Exception("Phone/Email input field not found on page! Instagram layout changed or blocked.")
-                
-            await phone_field.click()
-            for char in phone:
-                await phone_field.type(char)
-                await human_delay(0.05, 0.15)
-            
-            # 5. Click Next after entering phone
-            next_btn = await page.query_selector('button[type="submit"], button:has-text("Next"), button:has-text("Sign up")')
-            if next_btn:
-                await next_btn.click()
-                await human_delay(3, 5)
-
-            # 6. Fill Credentials securely on the next step
             if status_cb:
-                await status_cb("📝 Filling account credentials...")
+                await status_cb(f"🔑 Entering SMS code: {code}")
+            
+            # Type verification code if input field exists
+            await page.fill('input[name="confirmationCode"]', code)
+            await page.click('button:has-text("Confirm")')
+            await asyncio.sleep(5)
 
-            await page.wait_for_selector('input[name="fullName"], input[name*="Name"]', timeout=15000)
+            await browser.close()
+            return {"username": username, "password": password, "phone": phone}
 
-            await page.fill('input[name="fullName"], input[name*="Name"]', f"{first_name} {last_name}")
-            await human_delay(0.5, 1.0)
-            
-            await page.fill('input[name="username"], input[name*="username"]', username)
-            await human_delay(0.5, 1.0)
-            
-            await page.fill('input[name="password"], input[name*="password"]', password)
-            await human_delay(0.5, 1.0)
-            
-            # Submit credentials
-            submit_btn = await page.query_selector('button[type="submit"]:has-text("Sign up"), button[type="submit"]:has-text("Next")')
-            if submit_btn:
-                await submit_btn.click()
-                await human_delay(4, 7)
-            
-            # DOB Selection (if not already handled)
-            try:
-                month_sel = await page.query_selector('select[name*="month"]')
-                if month_sel:
-                    await page.select_option('select[name*="month"]', str(dob_month))
-                    await page.select_option('select[name*="day"]', str(dob_day))
-                    await page.select_option('select[name*="year"]', str(dob_year))
-                    await human_delay(1, 2)
-                    
-                    confirm_dob = await page.query_selector('button:has-text("Next"), button[type="submit"]')
-                    if confirm_dob:
-                        await confirm_dob.click()
-                        await human_delay(3, 5)
-            except Exception as dob_err:
-                log.debug(f"DOB selection skipped/failed: {dob_err}")
-            
-            # Handle SMS Verification Code Input
-            if status_cb:
-                await status_cb("📱 Awaiting SMS verification code...")
-            
-            code_input = await page.wait_for_selector('input[name="confirmationCode"], input[type="text"]', timeout=120000)
-            sms_code = await sms_handler.get_sms_code(order_id, timeout=120)
-            
-            if sms_code:
-                await code_input.fill(sms_code)
-                await code_input.press("Enter")
-                await human_delay(4, 6)
-                if status_cb:
-                    await status_cb("✅ Verification code accepted!")
-            else:
-                raise Exception("SMS code verification timeout")
-            
-            # Export session state cookies
-            session_file = f"/tmp/ig_{username}_{int(time.time())}.json"
-            try:
-                await context.storage_state(path=session_file)
-            except:
-                pass
-            
-            return {
-                "username": username,
-                "password": password,
-                "phone": phone,
-                "device": device_fp['model'],
-                "proxy": proxy_url,
-                "status": "success",
-                "created_at": datetime.now().isoformat(),
-            }
-            
         except Exception as e:
-            log.error(f"❌ Attempt {attempt} failed: {e}")
-            if page:
-                try:
-                    os.makedirs("debug_screenshots", exist_ok=True)
-                    await page.screenshot(path=f"debug_screenshots/error_att_{attempt}_{int(time.time())}.png")
-                except:
-                    pass
-            if order_id:
-                await sms_handler.cancel_order(order_id)
-            if attempt < max_retries:
-                await asyncio.sleep(15)
-        finally:
-            if browser:
-                try: await browser.close()
-                except: pass
-            if playwright:
-                try: await playwright.stop()
-                except: pass
-    return None
+            log.error(f"Playwright Automation Exception: {e}")
+            await fivesim.cancel(order_id)
+            await browser.close()
+            return None
 
 # ═══════════════════════════════════════════════════════════════════════════
-# TELEGRAM BOT HANDLERS & COMMANDS
+# TELEGRAM BOT HANDLERS
 # ═══════════════════════════════════════════════════════════════════════════
 
 async def start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    keyboard = [
-        [InlineKeyboardButton("🚀 Create Accounts", callback_data="menu_create")],
-        [InlineKeyboardButton("📊 Bot Status", callback_data="menu_status")]
-    ]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    
-    await update.message.reply_text(
-        "🤖 *Instagram Automation & Account Creator Bot*\n\n"
-        "⚡ Fully equipped with Cloudflare bypass & mobile fingerprinting.\n"
-        "Use the inline buttons or commands below:\n\n"
-        "📝 `/create [count]` - Start batch creation\n"
-        "📈 `/status` - View health and statistics",
-        parse_mode="Markdown",
-        reply_markup=reply_markup
-    )
+    await update.message.reply_text("🤖 Instagram Playwright Automation Bot Active!\n\nUse `/create` to register.")
 
 async def create_command(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    if not sms_handler:
-        await update.message.reply_text("❌ FiveSim API key is missing or invalid.")
-        return
+    msg = await update.message.reply_text("🚀 Starting Playwright automation...")
     
-    try:
-        count = int(ctx.args[0]) if ctx.args else 1
-        if count > 20:
-            await update.message.reply_text("⚠️ Max 20 accounts per batch to prevent rate limits.")
-            count = 20
-        
-        msg = await update.message.reply_text(f"🚀 Initializing batch creation for {count} accounts...")
-        
-        created_accounts = []
-        failed_count = 0
-        
-        for i in range(1, count + 1):
-            device_fp = DeviceFingerprint.generate()
-            proxy = await proxy_manager.get_residential_proxy() or await proxy_manager.get_datacenter_proxy()
-            
-            async def update_status_text(text):
-                try:
-                    await msg.edit_text(
-                        f"🔄 **Batch Progress [{i}/{count}]**\n\n"
-                        f"{text}\n\n"
-                        f"✅ Success: `{len(created_accounts)}` | ❌ Failed: `{failed_count}`",
-                        parse_mode="Markdown"
-                    )
-                except:
-                    pass
-            
-            account_data = await create_instagram_account(device_fp, proxy, status_cb=update_status_text, max_retries=2)
-            if account_data:
-                created_accounts.append(account_data)
-                await asyncio.sleep(random.uniform(30, 60))
-            else:
-                failed_count += 1
-                await asyncio.sleep(20)
-        
-        # Save results to JSON file
-        export_filename = f"instagram_accounts_{int(time.time())}.json"
-        with open(export_filename, "w", encoding="utf-8") as f:
-            json.dump({
-                "total_requested": count,
-                "successful": len(created_accounts),
-                "failed": failed_count,
-                "accounts": created_accounts
-            }, f, indent=2)
-        
-        with open(export_filename, "rb") as f:
-            await update.message.reply_document(
-                document=f,
-                caption=f"✅ *Batch Processing Complete!*\n\n📊 Total Created: `{len(created_accounts)}/{count}`",
-                parse_mode="Markdown"
-            )
-        
-        if os.path.exists(export_filename):
-            os.remove(export_filename)
-            
-    except Exception as e:
-        log.error(f"Create command error: {e}")
-        await update.message.reply_text(f"❌ Execution error: {e}")
+    async def update_status(text):
+        try:
+            await msg.edit_text(f"🔄 **Status:** {text}", parse_mode="Markdown")
+        except:
+            pass
 
-async def status_command(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(
-        f"📊 *System Status Report*\n\n"
-        f"🛡️ Active Residential Proxies: `{len(RESIDENTIAL_PROXIES)}`\n"
-        f"💀 Blacklisted Dead Proxies: `{len(proxy_manager.dead_proxies)}`\n"
-        f"🔐 Total Captchas Solved: `{captcha_solver.solve_count}`\n"
-        f"📱 SMS Provider: `FiveSim (Active)`",
-        parse_mode="Markdown"
-    )
-
-async def button_callback(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
+    account = await run_playwright_signup(status_cb=update_status)
     
-    if query.data == "menu_status":
-        await query.message.reply_text(
-            f"📊 *Quick Status*\nDead Proxies: `{len(proxy_manager.dead_proxies)}` | Captchas Solved: `{captcha_solver.solve_count}`",
+    if account:
+        await update.message.reply_text(
+            f"✅ **Account Created Successfully!**\n\n"
+            f"👤 Username: `{account['username']}`\n"
+            f"🔑 Password: `{account['password']}`\n"
+            f"📱 Phone: `{account['phone']}`",
             parse_mode="Markdown"
         )
-    elif query.data == "menu_create":
-        await query.message.reply_text("💡 Send `/create 3` to start creating 3 accounts automatically.")
-
-# ═══════════════════════════════════════════════════════════════════════════
-# MAIN ENTRY POINT
-# ═══════════════════════════════════════════════════════════════════════════
+    else:
+        await update.message.reply_text("❌ Account creation failed. Check logs.")
 
 def main():
     app = Application.builder().token(BOT_TOKEN).build()
-    
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("create", create_command))
-    app.add_handler(CommandHandler("status", status_command))
-    app.add_handler(CallbackQueryHandler(button_callback))
-    
-    log.info("🤖 Telegram Bot running with full production modules...")
+    log.info("🤖 Bot polling started with Playwright stack...")
     app.run_polling()
 
 if __name__ == "__main__":
