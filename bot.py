@@ -187,46 +187,44 @@ class ProxyManager:
 proxy_manager = ProxyManager(RESIDENTIAL_PROXIES, DATACENTER_PROXIES)
 
 # ═══════════════════════════════════════════════════════════════════════════
-# 3. FIVESIM SMS VERIFICATION
+# 3. FIVESIM SMS VERIFICATION (FIXED & UPDATED)
 # ═══════════════════════════════════════════════════════════════════════════
 
 class SMSVerification:
-    """Handle SMS verification via FiveSim"""
+    """Handle SMS verification via FiveSim (v1 Path Format Fixed)"""
     
-    FIVESIM_API = "https://api.fivesim.net"
+    FIVESIM_API = "https://api.fivesim.net/v1"
     
     def __init__(self, api_key):
         self.api_key = api_key
         self.client = httpx.AsyncClient(
-            headers={"Authorization": f"Bearer {api_key}"}
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Accept": "application/json"
+            },
+            follow_redirects=True
         )
     
     async def get_phone_number(self, country="USA", operator="any"):
         """Get temporary phone number"""
         try:
-            payload = {
-                "country": country.upper(),
-                "operator": operator,
-                "product": "instagram"
-            }
+            url = f"{self.FIVESIM_API}/user/buy/activation/{country.lower()}/{operator}/instagram"
             
-            r = await self.client.get(
-                f"{self.FIVESIM_API}/user/buy/activation/",
-                params=payload,
-                timeout=15.0
-            )
+            r = await self.client.get(url, timeout=15.0)
             
             if r.status_code == 200:
-                data = r.json()
-                if data.get("status") == "success":
-                    phone_data = data.get("data", {})
+                try:
+                    data = r.json()
                     return {
-                        "phone": phone_data.get("phone"),
-                        "order_id": phone_data.get("id"),
-                        "price": phone_data.get("price"),
+                        "phone": data.get("phone"),
+                        "order_id": data.get("id"),
+                        "price": data.get("price"),
                     }
+                except Exception as je:
+                    log.error(f"JSON Decode Error. Response text: {r.text}")
+                    return None
             
-            log.error(f"Phone fetch failed: {r.text}")
+            log.error(f"Phone fetch failed: Status {r.status_code} - {r.text}")
             return None
             
         except Exception as e:
@@ -245,27 +243,36 @@ class SMSVerification:
                 )
                 
                 if r.status_code == 200:
-                    data = r.json()
+                    try:
+                        data = r.json()
+                    except Exception:
+                        await asyncio.sleep(3)
+                        continue
                     
-                    if data.get("status") == "success":
-                        sms_data = data.get("data", {})
+                    if isinstance(data, dict):
+                        status = data.get("status")
+                        if status == "received":
+                            sms_list = data.get("sms", [])
+                            if sms_list:
+                                sms_text = sms_list[0].get("text", "")
+                                match = re.search(r'\b(\d{6})\b', sms_text)
+                                if match:
+                                    code = match.group(1)
+                                    log.info(f"✅ SMS code extracted: {code}")
+                                    return code
+                        elif status == "pending":
+                            log.debug("Waiting for SMS...")
+                        elif status == "timeout":
+                            log.error("SMS timeout")
+                            return None
                         
-                        # Check for different SMS text formats
-                        sms_text = sms_data.get("text", "")
-                        
-                        # Extract 6-digit code
+                        # Fallback for text parsing
+                        sms_text = data.get("text", "")
                         match = re.search(r'\b(\d{6})\b', sms_text)
                         if match:
                             code = match.group(1)
                             log.info(f"✅ SMS code extracted: {code}")
                             return code
-                    
-                    elif data.get("status") == "pending":
-                        log.debug("Waiting for SMS...")
-                    
-                    elif data.get("status") == "timeout":
-                        log.error("SMS timeout")
-                        return None
                 
                 await asyncio.sleep(3)
                 
