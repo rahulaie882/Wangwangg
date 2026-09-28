@@ -26,10 +26,10 @@ log = logging.getLogger(__name__)
 # CONFIG
 # ═══════════════════════════════════════════════════════════════════════════
 
-BOT_TOKEN = os.getenv("8948043707:AAH1E3k_H4-piysSMx8O15WBcg5NCA3SxBE")
-CHAT_ID = os.getenv("8963867689")
-TWOCAPTCHA_KEY = os.getenv("6498bcd403bd611438b1fb68568355b1")
-FIVESIM_API_KEY = os.getenv("eyJhbGciOiJSUzUxMiIsInR5cCI6IkpXVCJ9.eyJleHAiOjE4MjIwNTIxMDQsImlhdCI6MTc5MDUxNjEwNCwicmF5IjoiNDMzNjhkNTQ5NGNlM2YzM2UzNTYwMGE1ZGIxOTc0NWUiLCJzdWIiOjQ1NzU0ODh9.csk2R9FNfET5ZhvdjBsOpVX-lYiVTHZCPw7UYFpZcCMUhNtjWJ-BhI2vUXB4F_8kIxU1Xlm6nAg4yraJ5lW5jP9xoZHiT6bu7drW_klEBMZ6pSVak_0RjtyCE5wMXeBqnxbsijd7sYhNz9JVXzHud6Qp7Nbaqr-Xwpqz9ilycM353h8c8G2nxr7Csb8xNSOiy1KXU-5LGfa8mErxHqyRQnVsr7gXpnVlSg4sObdrXbzO17UabirAKga0C3O3_ISUD3lsZLI2QDSaFW2LU_jh5SPg6cuCZpg86_JSxAgleLEth2tdxN0_lryw-NUrGGRGSnbtHwVOM5xUeKqMlBrBrw")
+BOT_TOKEN = "8948043707:AAH1E3k_H4-piysSMx8O15WBcg5NCA3SxBE"
+CHAT_ID = "8963867689"
+TWOCAPTCHA_KEY = "6498bcd403bd611438b1fb68568355b1"
+FIVESIM_API_KEY = "eyJhbGciOiJSUzUxMiIsInR5cCI6IkpXVCJ9.eyJleHAiOjE4MjIwNTIxMDQsImlhdCI6MTc5MDUxNjEwNCwicmF5IjoiNDMzNjhkNTQ5NGNlM2YzM2UzNTYwMGE1ZGIxOTc0NWUiLCJzdWIiOjQ1NzU0ODh9.csk2R9FNfET5ZhvdjBsOpVX-lYiVTHZCPw7UYFpZcCMUhNtjWJ-BhI2vUXB4F_8kIxU1Xlm6nAg4yraJ5lW5jP9xoZHiT6bu7drW_klEBMZ6pSVak_0RjtyCE5wMXeBqnxbsijd7sYhNz9JVXzHud6Qp7Nbaqr-Xwpqz9ilycM353h8c8G2nxr7Csb8xNSOiy1KXU-5LGfa8mErxHqyRQnVsr7gXpnVlSg4sObdrXbzO17UabirAKga0C3O3_ISUD3lsZLI2QDSaFW2LU_jh5SPg6cuCZpg86_JSxAgleLEth2tdxN0_lryw-NUrGGRGSnbtHwVOM5xUeKqMlBrBrw"
 
 # Residential proxies
 RESIDENTIAL_PROXIES = [
@@ -523,7 +523,6 @@ async def create_instagram_account(device_fp, proxy_url, status_cb=None, max_ret
                 await status_cb("📱 Switching to phone signup...")
             
             try:
-                # Look for "Use phone instead" or similar
                 phone_link = await page.query_selector('button:has-text("phone")')
                 if phone_link:
                     await phone_link.click()
@@ -660,14 +659,12 @@ async def create_instagram_account(device_fp, proxy_url, status_cb=None, max_ret
             if status_cb:
                 await status_cb(f"📱 Waiting for SMS on {phone}...")
             
-            # Wait for SMS code input
             try:
                 code_input = await page.wait_for_selector(
                     'input[type="text"]',
                     timeout=120000
                 )
                 
-                # Get SMS code
                 if status_cb:
                     await status_cb("📨 Retrieving SMS code...")
                 
@@ -726,7 +723,6 @@ async def create_instagram_account(device_fp, proxy_url, status_cb=None, max_ret
             if status_cb:
                 await status_cb(f"❌ Error: {str(e)[:50]}")
             
-            # Cancel SMS order
             if order_id:
                 await sms_handler.cancel_order(order_id)
             
@@ -813,7 +809,6 @@ async def create_command(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                 failed += 1
                 await asyncio.sleep(30)
         
-        # Export
         export_data = {
             "total": count,
             "created": len(accounts_created),
