@@ -219,7 +219,6 @@ class SMSVerification:
             url = f"{self.FIVESIM_API}/user/buy/activation/{country.lower()}/{operator}/instagram"
             log.info("Fetching phone number from FiveSim via Playwright API request context...")
             
-            # Using Playwright page.request to ensure Cloudflare cookies pass seamlessly without fetch errors
             response = await page.request.get(
                 url,
                 headers={
@@ -407,11 +406,11 @@ async def create_stealth_context(device_fp, proxy_url):
         return None, None, None
 
 # ═══════════════════════════════════════════════════════════════════════════
-# 6. INSTAGRAM AUTOMATED REGISTRATION WORKFLOW
+# 6. INSTAGRAM AUTOMATED REGISTRATION WORKFLOW (UPDATED SELECTORS)
 # ═══════════════════════════════════════════════════════════════════════════
 
 async def create_instagram_account(device_fp, proxy_url, status_cb=None, max_retries=3):
-    playwright, browser, order_id = None, None, None
+    playwright, browser, context, page, order_id = None, None, None, None, None
     
     for attempt in range(1, max_retries + 1):
         try:
@@ -443,52 +442,41 @@ async def create_instagram_account(device_fp, proxy_url, status_cb=None, max_ret
             if status_cb:
                 await status_cb("🌍 Navigating to Instagram signup portal...")
             
-            await page.goto("https://www.instagram.com/accounts/emailsignup/", wait_until="networkidle")
+            await page.goto("https://www.instagram.com/accounts/emailsignup/", wait_until="networkidle", timeout=45000)
             await human_delay(2, 4)
             
-            # Switch to Phone Mode
+            # Switch to Phone Mode if needed
             try:
-                phone_toggle = await page.query_selector('button:has-text("phone")')
+                phone_toggle = await page.query_selector('button:has-text("phone"), button:has-text("Phone")')
                 if phone_toggle:
                     await phone_toggle.click()
                     await human_delay(1, 2)
             except:
                 pass
             
-            # Input Phone Number
-            phone_field = await page.query_selector('input[type="tel"]') or await page.query_selector('input[name*="phone"]')
+            # Robust Phone Number Field Fill
+            phone_field = await page.query_selector('input[name="mobileOrEmail"]') or await page.query_selector('input[type="tel"]') or await page.query_selector('input[name*="phone"]')
             if phone_field:
                 await phone_field.click()
                 for char in phone:
                     await phone_field.type(char)
-                    await human_delay(0.04, 0.12)
+                    await human_delay(0.05, 0.15)
             
-            # Input Name & Credentials
-            name_field = await page.query_selector('input[name="fullName"]')
-            if name_field:
-                await name_field.click()
-                for char in f"{first_name} {last_name}":
-                    await name_field.type(char)
-                    await human_delay(0.04, 0.12)
+            # Fill Credentials securely using Playwright fill methods
+            await page.fill('input[name="fullName"]', f"{first_name} {last_name}")
+            await human_delay(0.5, 1.0)
             
-            user_field = await page.query_selector('input[name="username"]')
-            if user_field:
-                await user_field.click()
-                for char in username:
-                    await user_field.type(char)
-                    await human_delay(0.04, 0.12)
+            await page.fill('input[name="username"]', username)
+            await human_delay(0.5, 1.0)
             
-            pass_field = await page.query_selector('input[name="password"]')
-            if pass_field:
-                await pass_field.click()
-                for char in password:
-                    await pass_field.type(char)
-                    await human_delay(0.04, 0.12)
+            await page.fill('input[name="password"]', password)
+            await human_delay(0.5, 1.0)
             
-            next_btn = await page.query_selector('button:has-text("Next")')
-            if next_btn:
-                await next_btn.click()
-                await human_delay(3, 5)
+            # Click Signup / Next button
+            signup_btn = await page.query_selector('button[type="submit"]:has-text("Sign up"), button[type="submit"]:has-text("Next"), button:has-text("Next")')
+            if signup_btn:
+                await signup_btn.click()
+                await human_delay(4, 7)
             
             # DOB Selection
             try:
@@ -497,18 +485,19 @@ async def create_instagram_account(device_fp, proxy_url, status_cb=None, max_ret
                 await page.select_option('select[name*="year"]', str(dob_year))
                 await human_delay(1, 2)
                 
-                confirm_dob = await page.query_selector('button:has-text("Next")')
+                confirm_dob = await page.query_selector('button:has-text("Next"), button[type="submit"]')
                 if confirm_dob:
                     await confirm_dob.click()
                     await human_delay(3, 5)
             except Exception as dob_err:
                 log.debug(f"DOB selection skipped/failed: {dob_err}")
             
-            # Handle SMS Verification
+            # Handle SMS Verification Code Input
             if status_cb:
                 await status_cb("📱 Awaiting SMS verification code...")
             
-            code_input = await page.wait_for_selector('input[type="text"]', timeout=120000)
+            # Look for confirmation text box or input code field
+            code_input = await page.wait_for_selector('input[name="confirmationCode"], input[type="text"]', timeout=120000)
             sms_code = await sms_handler.get_sms_code(order_id, timeout=120)
             
             if sms_code:
@@ -539,6 +528,12 @@ async def create_instagram_account(device_fp, proxy_url, status_cb=None, max_ret
             
         except Exception as e:
             log.error(f"❌ Attempt {attempt} failed: {e}")
+            if page:
+                try:
+                    os.makedirs("debug_screenshots", exist_ok=True)
+                    await page.screenshot(path=f"debug_screenshots/error_att_{attempt}_{int(time.time())}.png")
+                except:
+                    pass
             if order_id:
                 await sms_handler.cancel_order(order_id)
             if attempt < max_retries:
