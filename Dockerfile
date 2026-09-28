@@ -2,10 +2,13 @@ FROM python:3.12-slim
 
 WORKDIR /app
 
-# Playwright Chromium ke liye zaroori system libraries Debian par install kar rahe hain
+# Playwright Chromium ke liye zaroori system libraries
 RUN apt-get update && apt-get install -y \
     wget \
     gnupg \
+    ca-certificates \
+    fonts-liberation \
+    fonts-noto-color-emoji \
     libglib2.0-0 \
     libnss3 \
     libnspr4 \
@@ -29,17 +32,22 @@ RUN apt-get update && apt-get install -y \
     libxrandr2 \
     libxrender1 \
     libxtst6 \
+    libxshmfence1 \
     libwayland-client0 \
     libx11-xcb1 \
     libxcb1 \
     libxkbcommon0 \
     libpangoft2-1.0-0 \
+    libxdmcp6 \
+    libxcb-dri3-0 \
+    libgles2 \
+    xvfb \
     && rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Build ke waqt Playwright ka chromium download karwa rahe hain taaki path ka error na aaye
+# Playwright Chromium binary download
 RUN playwright install chromium
 
 COPY . .
