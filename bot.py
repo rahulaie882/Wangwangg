@@ -406,7 +406,7 @@ async def create_stealth_context(device_fp, proxy_url):
         return None, None, None
 
 # ═══════════════════════════════════════════════════════════════════════════
-# 6. INSTAGRAM AUTOMATED REGISTRATION WORKFLOW (UPDATED MULTI-STEP FIX)
+# 6. INSTAGRAM AUTOMATED REGISTRATION WORKFLOW (ULTIMATE FALLBACK FIX)
 # ═══════════════════════════════════════════════════════════════════════════
 
 async def create_instagram_account(device_fp, proxy_url, status_cb=None, max_retries=3):
@@ -443,34 +443,89 @@ async def create_instagram_account(device_fp, proxy_url, status_cb=None, max_ret
                 await status_cb("🌍 Navigating to Instagram signup portal...")
             
             await page.goto("https://www.instagram.com/accounts/emailsignup/", wait_until="networkidle", timeout=45000)
-            await human_delay(2, 4)
+            await human_delay(3, 5)
             
-            # Switch to Phone Mode if needed
+            # 1. Handle Cookie consent / Dialogs if any
             try:
-                phone_toggle = await page.query_selector('button:has-text("phone"), button:has-text("Phone")')
+                for btn_text in ["Accept", "Allow all cookies", "Allow", "Only allow essential cookies"]:
+                    btn = await page.query_selector(f'button:has-text("{btn_text}")')
+                    if btn:
+                        await btn.click()
+                        await human_delay(1, 2)
+                        break
+            except:
+                pass
+
+            # 2. Check if Instagram asks for Birthday FIRST
+            try:
+                month_select = await page.query_selector('select[name*="month"]')
+                if month_select:
+                    log.info("ℹ️ Birthday selection appeared first, filling DOB...")
+                    await page.select_option('select[name*="month"]', str(dob_month))
+                    await page.select_option('select[name*="day"]', str(dob_day))
+                    await page.select_option('select[name*="year"]', str(dob_year))
+                    await human_delay(1, 2)
+                    
+                    next_btn = await page.query_selector('button:has-text("Next"), button[type="submit"]')
+                    if next_btn:
+                        await next_btn.click()
+                        await human_delay(3, 5)
+            except Exception as e:
+                log.debug(f"DOB step skipped or not first: {e}")
+
+            # 3. Switch to Phone Mode tab if required
+            try:
+                phone_toggle = await page.query_selector('button:has-text("phone"), button:has-text("Phone"), span:has-text("phone")')
                 if phone_toggle:
                     await phone_toggle.click()
                     await human_delay(1, 2)
             except:
                 pass
             
-            # Step 1: Robust Phone Number Field Fill
-            phone_field = await page.query_selector('input[name="mobileOrEmail"]') or await page.query_selector('input[type="tel"]') or await page.query_selector('input[name*="phone"]')
+            # 4. Robust Phone Number / Email Field Fill with expanded fallback selectors
+            if status_cb:
+                await status_cb("📱 Entering phone number...")
+
+            phone_field = None
+            selectors = [
+                'input[name="mobileOrEmail"]',
+                'input[name="emailOrPhone"]',
+                'input[name="phoneOrEmail"]',
+                'input[type="tel"]',
+                'input[name*="phone"]',
+                'input[name*="email"]',
+                'input[aria-label*="Mobile"]',
+                'input[aria-label*="Phone"]',
+                'input[aria-label*="Email"]',
+                'input[data-testid*="phone"]',
+                'input[data-testid*="email"]',
+                'form input[type="text"]'
+            ]
+            
+            for sel in selectors:
+                try:
+                    phone_field = await page.wait_for_selector(sel, timeout=4000)
+                    if phone_field:
+                        log.info(f"✅ Found phone/email field using selector: {sel}")
+                        break
+                except:
+                    continue
+            
             if not phone_field:
-                raise Exception("Phone number input field not found on page!")
+                raise Exception("Phone/Email input field not found on page! Instagram layout changed or blocked.")
                 
             await phone_field.click()
             for char in phone:
                 await phone_field.type(char)
                 await human_delay(0.05, 0.15)
             
-            # Step 2: Click 'Next' or 'Sign up' button to pass the multi-step phone screen
+            # 5. Click Next after entering phone
             next_btn = await page.query_selector('button[type="submit"], button:has-text("Next"), button:has-text("Sign up")')
             if next_btn:
                 await next_btn.click()
                 await human_delay(3, 5)
 
-            # Step 3: Wait for Name, Username & Password fields to appear on the next screen
+            # 6. Fill Credentials securely on the next step
             if status_cb:
                 await status_cb("📝 Filling account credentials...")
 
@@ -485,23 +540,25 @@ async def create_instagram_account(device_fp, proxy_url, status_cb=None, max_ret
             await page.fill('input[name="password"], input[name*="password"]', password)
             await human_delay(0.5, 1.0)
             
-            # Step 4: Submit credentials
+            # Submit credentials
             submit_btn = await page.query_selector('button[type="submit"]:has-text("Sign up"), button[type="submit"]:has-text("Next")')
             if submit_btn:
                 await submit_btn.click()
                 await human_delay(4, 7)
             
-            # DOB Selection
+            # DOB Selection (if not already handled)
             try:
-                await page.select_option('select[name*="month"]', str(dob_month))
-                await page.select_option('select[name*="day"]', str(dob_day))
-                await page.select_option('select[name*="year"]', str(dob_year))
-                await human_delay(1, 2)
-                
-                confirm_dob = await page.query_selector('button:has-text("Next"), button[type="submit"]')
-                if confirm_dob:
-                    await confirm_dob.click()
-                    await human_delay(3, 5)
+                month_sel = await page.query_selector('select[name*="month"]')
+                if month_sel:
+                    await page.select_option('select[name*="month"]', str(dob_month))
+                    await page.select_option('select[name*="day"]', str(dob_day))
+                    await page.select_option('select[name*="year"]', str(dob_year))
+                    await human_delay(1, 2)
+                    
+                    confirm_dob = await page.query_selector('button:has-text("Next"), button[type="submit"]')
+                    if confirm_dob:
+                        await confirm_dob.click()
+                        await human_delay(3, 5)
             except Exception as dob_err:
                 log.debug(f"DOB selection skipped/failed: {dob_err}")
             
