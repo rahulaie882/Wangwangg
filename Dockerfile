@@ -1,14 +1,12 @@
 FROM python:3.12-slim
 
-WORKDIR /app
-
-# Playwright Chromium ke liye zaroori system libraries
+# Install system dependencies and Chrome prerequisites
 RUN apt-get update && apt-get install -y \
     wget \
     gnupg \
     ca-certificates \
-    fonts-liberation \
-    fonts-noto-color-emoji \
+    curl \
+    unzip \
     libglib2.0-0 \
     libnss3 \
     libnspr4 \
@@ -44,12 +42,20 @@ RUN apt-get update && apt-get install -y \
     xvfb \
     && rm -rf /var/lib/apt/lists/*
 
+# Install Google Chrome Stable (Required for Undetected Chromedriver)
+RUN wget -q -O - https://dl-ssl.google.com/linux/linux_signing_key.pub | gpg --dearmor -o /usr/share/keyrings/google-chrome.gpg \
+    && echo "deb [arch=amd64 signed-by=/usr/share/keyrings/google-chrome.gpg] http://dl.google.com/linux/chrome/deb/ stable main" > /etc/apt/sources.list.d/google-chrome.list \
+    && apt-get update && apt-get install -y google-chrome-stable \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+# Copy requirements and install python packages
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Playwright Chromium binary download
-RUN playwright install chromium
-
+# Copy all project files
 COPY . .
 
+# Run the bot
 CMD ["python", "bot.py"]
