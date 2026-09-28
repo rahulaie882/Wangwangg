@@ -406,7 +406,7 @@ async def create_stealth_context(device_fp, proxy_url):
         return None, None, None
 
 # ═══════════════════════════════════════════════════════════════════════════
-# 6. INSTAGRAM AUTOMATED REGISTRATION WORKFLOW (UPDATED SELECTORS)
+# 6. INSTAGRAM AUTOMATED REGISTRATION WORKFLOW (UPDATED MULTI-STEP FIX)
 # ═══════════════════════════════════════════════════════════════════════════
 
 async def create_instagram_account(device_fp, proxy_url, status_cb=None, max_retries=3):
@@ -454,28 +454,41 @@ async def create_instagram_account(device_fp, proxy_url, status_cb=None, max_ret
             except:
                 pass
             
-            # Robust Phone Number Field Fill
+            # Step 1: Robust Phone Number Field Fill
             phone_field = await page.query_selector('input[name="mobileOrEmail"]') or await page.query_selector('input[type="tel"]') or await page.query_selector('input[name*="phone"]')
-            if phone_field:
-                await phone_field.click()
-                for char in phone:
-                    await phone_field.type(char)
-                    await human_delay(0.05, 0.15)
+            if not phone_field:
+                raise Exception("Phone number input field not found on page!")
+                
+            await phone_field.click()
+            for char in phone:
+                await phone_field.type(char)
+                await human_delay(0.05, 0.15)
             
-            # Fill Credentials securely using Playwright fill methods
-            await page.fill('input[name="fullName"]', f"{first_name} {last_name}")
+            # Step 2: Click 'Next' or 'Sign up' button to pass the multi-step phone screen
+            next_btn = await page.query_selector('button[type="submit"], button:has-text("Next"), button:has-text("Sign up")')
+            if next_btn:
+                await next_btn.click()
+                await human_delay(3, 5)
+
+            # Step 3: Wait for Name, Username & Password fields to appear on the next screen
+            if status_cb:
+                await status_cb("📝 Filling account credentials...")
+
+            await page.wait_for_selector('input[name="fullName"], input[name*="Name"]', timeout=15000)
+
+            await page.fill('input[name="fullName"], input[name*="Name"]', f"{first_name} {last_name}")
             await human_delay(0.5, 1.0)
             
-            await page.fill('input[name="username"]', username)
+            await page.fill('input[name="username"], input[name*="username"]', username)
             await human_delay(0.5, 1.0)
             
-            await page.fill('input[name="password"]', password)
+            await page.fill('input[name="password"], input[name*="password"]', password)
             await human_delay(0.5, 1.0)
             
-            # Click Signup / Next button
-            signup_btn = await page.query_selector('button[type="submit"]:has-text("Sign up"), button[type="submit"]:has-text("Next"), button:has-text("Next")')
-            if signup_btn:
-                await signup_btn.click()
+            # Step 4: Submit credentials
+            submit_btn = await page.query_selector('button[type="submit"]:has-text("Sign up"), button[type="submit"]:has-text("Next")')
+            if submit_btn:
+                await submit_btn.click()
                 await human_delay(4, 7)
             
             # DOB Selection
@@ -496,7 +509,6 @@ async def create_instagram_account(device_fp, proxy_url, status_cb=None, max_ret
             if status_cb:
                 await status_cb("📱 Awaiting SMS verification code...")
             
-            # Look for confirmation text box or input code field
             code_input = await page.wait_for_selector('input[name="confirmationCode"], input[type="text"]', timeout=120000)
             sms_code = await sms_handler.get_sms_code(order_id, timeout=120)
             
