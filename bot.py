@@ -31,7 +31,6 @@ CONFIG = {
     "max_retries":    3,
 }
 
-# Teri di gayi paid rotating proxies ki list
 PROXIES = [
     "http://uncpjndo:w77Ebc0h2A@Us6.cactussstp.com:3129",
     "http://uncpjndo:w77Ebc0h2A@hk1.cactussstp.com:8080",
@@ -307,19 +306,25 @@ class FiveSim:
             except Exception:
                 pass
 
-# Human-like typing with random delays and micro-pauses
-async def human_type(page, selector: str, text: str):
-    try:
-        await page.click(selector)
-        await asyncio.sleep(random.uniform(0.5, 1.2))
-        for ch in text:
-            await page.keyboard.type(ch, delay=random.randint(80, 220))
-            if random.random() < 0.12:
-                await asyncio.sleep(random.uniform(0.1, 0.4))
-        await asyncio.sleep(random.uniform(0.4, 0.9))
-    except Exception as e:
-        log.warning(f"Human type error on {selector}: {e}")
-        await page.fill(selector, text)
+# Smart Human Type with multiple fallback selectors
+async def human_type_smart(page, selectors: list, text: str):
+    success = False
+    for selector in selectors:
+        try:
+            element = await page.wait_for_selector(selector, timeout=8000)
+            if element:
+                await page.click(selector)
+                await asyncio.sleep(random.uniform(0.4, 0.9))
+                for ch in text:
+                    await page.keyboard.type(ch, delay=random.randint(70, 200))
+                    if random.random() < 0.1:
+                        await asyncio.sleep(random.uniform(0.1, 0.3))
+                success = True
+                break
+        except Exception:
+            continue
+    if not success:
+        raise Exception(f"Failed to find or type into selectors: {selectors}")
 
 async def human_delay(min_sec=1.5, max_sec=3.5):
     await asyncio.sleep(random.uniform(min_sec, max_sec))
@@ -422,6 +427,7 @@ async def create_ig_account(status_cb=None) -> dict | None:
         mail = MailTM()
         sms = FiveSim()
         browser = None
+        page = None
         
         try:
             await status(f"🔄 Attempt {attempt}/{max_retries} shuru ho raha hai...")
@@ -475,7 +481,6 @@ async def create_ig_account(status_cb=None) -> dict | None:
                     viewport={"width": 1280, "height": 800},
                     locale="en-US"
                 )
-                # Webdriver property hide karne ke liye initialization script
                 await ctx.add_init_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined});")
                 page = await ctx.new_page()
 
@@ -486,17 +491,17 @@ async def create_ig_account(status_cb=None) -> dict | None:
 
                     await page.wait_for_selector('input[name="emailOrPhone"], input[name="email"], input[type="text"]', timeout=60000)
 
-                    # Human-like natural filling with delays
-                    await human_type(page, 'input[name="emailOrPhone"], input[name="email"], input[type="text"]', creds["email"])
+                    # Smart Human Typing with fallback selectors
+                    await human_type_smart(page, ['input[name="emailOrPhone"]', 'input[name="email"]', 'input[aria-label*="Mobile number or email"]'], creds["email"])
                     await human_delay(1.0, 2.0)
                     
-                    await human_type(page, 'input[name="fullName"], input[aria-label*="Full Name"]', creds["name"])
+                    await human_type_smart(page, ['input[name="fullName"]', 'input[aria-label*="Full Name"]', 'input[name="cueFullName"]'], creds["name"])
                     await human_delay(1.0, 2.0)
                     
-                    await human_type(page, 'input[name="username"], input[aria-label*="Username"]', creds["username"])
+                    await human_type_smart(page, ['input[name="username"]', 'input[aria-label*="Username"]', 'input[name="cueUsername"]'], creds["username"])
                     await human_delay(1.0, 2.0)
                     
-                    await human_type(page, 'input[name="password"], input[aria-label*="Password"]', creds["password"])
+                    await human_type_smart(page, ['input[name="password"]', 'input[aria-label*="Password"]'], creds["password"])
                     await human_delay(1.5, 3.0)
                     
                     await page.click('button[type="submit"]')
@@ -506,7 +511,7 @@ async def create_ig_account(status_cb=None) -> dict | None:
 
                     try:
                         bday = creds["birthday"]
-                        if await field_ok(page, 'select[title="Month:"]', timeout=60000):
+                        if await field_ok(page, 'select[title="Month:"]', timeout=30000):
                             await page.select_option('select[title="Month:"]', bday["month"])
                             await human_delay(0.8, 1.5)
                             await page.select_option('select[title="Day:"]',   bday["day"])
@@ -518,17 +523,17 @@ async def create_ig_account(status_cb=None) -> dict | None:
                     except Exception:
                         pass
 
-                    if await field_ok(page, 'input[name="email_confirmation_code"]', timeout=60000):
+                    if await field_ok(page, 'input[name="email_confirmation_code"]', timeout=40000):
                         await status("📬 Email confirmation code ka intezar hai...")
                         code = await mail.wait_code(timeout=120)
                         if code:
-                            await human_type(page, 'input[name="email_confirmation_code"]', code)
+                            await human_type_smart(page, ['input[name="email_confirmation_code"]'], code)
                             await human_delay(1.0, 2.0)
                             await page.click('button[type="submit"]')
                             await human_delay(3.0, 5.0)
 
-                    if await field_ok(page, 'input[name="phone_number"]', timeout=60000):
-                        await human_type(page, 'input[name="phone_number"]', creds["phone"])
+                    if await field_ok(page, 'input[name="phone_number"]', timeout=40000):
+                        await human_type_smart(page, ['input[name="phone_number"]'], creds["phone"])
                         await human_delay(1.0, 2.0)
                         await page.click('button[type="submit"]')
                         await human_delay(2.0, 4.0)
@@ -536,7 +541,7 @@ async def create_ig_account(status_cb=None) -> dict | None:
                         await status("📩 SMS verification code ka intezar hai...")
                         sms_code = await sms.wait_sms(timeout=120)
                         if sms_code:
-                            await human_type(page, 'input[name="verification_code"]', sms_code)
+                            await human_type_smart(page, ['input[name="verification_code"]'], sms_code)
                             await human_delay(1.0, 2.0)
                             await page.click('button[type="submit"]')
                             await human_delay(3.0, 5.0)
@@ -575,6 +580,14 @@ async def create_ig_account(status_cb=None) -> dict | None:
                     creds["session_file"] = session_filename
 
                 except Exception as inner_e:
+                    # 📸 CRITICAL ERROR CAPTURE: Screenshot lo aur exact error log karo
+                    if page:
+                        screenshot_path = f"error_attempt_{attempt}.png"
+                        try:
+                            await page.screenshot(path=screenshot_path, full_page=True)
+                            log.error(f"❌ Error Screenshot saved at: {screenshot_path}")
+                        except Exception:
+                            pass
                     raise inner_e
 
                 finally:
@@ -585,7 +598,7 @@ async def create_ig_account(status_cb=None) -> dict | None:
             return creds
 
         except Exception as outer_e:
-            log.error(f"Critical error on attempt {attempt}: {outer_e}")
+            log.error(f"🚨 Critical error on attempt {attempt}: {outer_e}")
             if browser:
                 try:
                     await browser.close()
