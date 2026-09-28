@@ -179,13 +179,13 @@ class ProxyManager:
 proxy_manager = ProxyManager(RESIDENTIAL_PROXIES, DATACENTER_PROXIES)
 
 # ═══════════════════════════════════════════════════════════════════════════
-# 3. FIVESIM SMS VERIFICATION (PLAYWRIGHT BROWSER FETCH BYPASS)
+# 3. FIVESIM SMS VERIFICATION (PLAYWRIGHT API REQUEST BYPASS)
 # ═══════════════════════════════════════════════════════════════════════════
 
 class SMSVerification:
-    """Handle SMS verification via FiveSim using Playwright browser fetch to bypass Cloudflare"""
+    """Handle SMS verification via FiveSim using Playwright session request context"""
     
-    FIVESIM_API = "https://api.fivesim.net/v1"
+    FIVESIM_API = "https://5sim.net/v1"
     
     def __init__(self, api_key):
         self.api_key = api_key
@@ -213,35 +213,27 @@ class SMSVerification:
             page = await context.new_page()
             
             log.info("Bypassing Cloudflare on FiveSim...")
-            await page.goto("https://fivesim.net", wait_until="networkidle", timeout=30000)
+            await page.goto("https://5sim.net", wait_until="networkidle", timeout=30000)
             await asyncio.sleep(3)
             
             url = f"{self.FIVESIM_API}/user/buy/activation/{country.lower()}/{operator}/instagram"
-            log.info("Fetching phone number from FiveSim via browser fetch...")
+            log.info("Fetching phone number from FiveSim via Playwright API request context...")
             
-            # FIXED: Using arguments passed into page.evaluate to prevent f-string syntax errors
-            api_response = await page.evaluate(
-                """async ([targetUrl, apiKey]) => {
-                    try {
-                        const response = await fetch(targetUrl, {
-                            method: "GET",
-                            headers: {
-                                "Authorization": "Bearer " + apiKey,
-                                "Accept": "application/json"
-                            }
-                        });
-                        const text = await response.text();
-                        return { status: response.status, body: text };
-                    } catch (err) {
-                        return { status: 500, body: err.toString() };
-                    }
-                }""",
-                [url, self.api_key]
+            # Using Playwright page.request to ensure Cloudflare cookies pass seamlessly without fetch errors
+            response = await page.request.get(
+                url,
+                headers={
+                    "Authorization": f"Bearer {self.api_key}",
+                    "Accept": "application/json"
+                }
             )
             
-            if api_response["status"] == 200:
+            status = response.status
+            body = await response.text()
+            
+            if status == 200:
                 try:
-                    data = json.loads(api_response["body"])
+                    data = json.loads(body)
                     if "phone" in data:
                         log.info(f"✅ Phone fetched: {data.get('phone')}")
                         return {
@@ -250,11 +242,11 @@ class SMSVerification:
                             "price": data.get("price"),
                         }
                     else:
-                        log.error(f"FiveSim JSON missing phone: {api_response['body']}")
+                        log.error(f"FiveSim JSON missing phone: {body}")
                 except Exception as json_err:
-                    log.error(f"JSON parse error: {json_err} | Body: {api_response['body']}")
+                    log.error(f"JSON parse error: {json_err} | Body: {body}")
             else:
-                log.error(f"FiveSim API status {api_response['status']}: {api_response['body']}")
+                log.error(f"FiveSim API status {status}: {body}")
             
             return None
             
