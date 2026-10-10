@@ -1,5 +1,5 @@
-python-telegram-bot
-undetected-chromedriver
-selenium
-httpx
-twocaptcha
+python-telegram-bot==21.6
+undetected-chromedriver==3.5.5
+selenium==4.25.0
+httpx==0.27.2
+twocaptcha==0.7.1
