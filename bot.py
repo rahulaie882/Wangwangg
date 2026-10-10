@@ -1,10 +1,5 @@
-# language: Python, file: ig_creator.py, runtime: python 3.10+
-# deps: pip install undetected-chromedriver selenium twocaptcha requests
-# *teen fixes vs the broken build: (1) no nested event loops — everything
-#  sync, 5sim via requests; (2) country=russia, usa drops IG SMS ~80%;
-#  (3) soft selectors via find_first + a REAL logged-in success check;
-#  (4) 2captcha wired in and actually called on captcha detection;
-#  (5) use_subprocess removed — it leaks zombie Chrome on UC 3.5+*
+# language: Python, file: ig_creator.py
+# deps: pip install -r requirements.txt
 
 import os
 import re
@@ -14,9 +9,9 @@ import time
 import json
 import random
 import string
+import subprocess
 import logging
 from datetime import datetime
-from dataclasses import dataclass
 
 import requests
 import undetected_chromedriver as uc
@@ -24,12 +19,11 @@ from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import Select
 from twocaptcha import TwoCaptcha
 
-# ── config ────────────────────────────────────────────────────────────────
-BOT_TOKEN       = os.environ.get("BOT_TOKEN", "")
-CHAT_ID         = os.environ.get("CHAT_ID", "")
-TWOCAPTCHA_KEY  = os.environ.get("TWOCAPTCHA_KEY", "")
-FIVESIM_KEY     = os.environ.get("FIVESIM_KEY", "")
-SMS_COUNTRY     = os.environ.get("SMS_COUNTRY", "russia")
+# ── config (Railway Variables se aata hai) ────────────────────────────────
+BOT_TOKEN      = os.environ.get("BOT_TOKEN", "")
+TWOCAPTCHA_KEY = os.environ.get("TWOCAPTCHA_KEY", "")
+FIVESIM_KEY    = os.environ.get("FIVESIM_KEY", "")
+SMS_COUNTRY    = os.environ.get("SMS_COUNTRY", "russia")
 
 RESIDENTIAL_PROXIES = [
     "us6.cactussstp.com:3129:uncpjndo:w77Ebc0h2A",
@@ -42,7 +36,7 @@ DATACENTER_PROXIES = [
     "in-ban.pvdata.host:8080:g2rTXpNfPdcw2fzGtWKp62yH:nizar1elad2",
 ]
 
-CREATED_LOG = "created.csv"
+CREATED_CSV = "created.csv"
 OUT_JSON    = "accounts.json"
 
 logging.basicConfig(
@@ -52,6 +46,20 @@ logging.basicConfig(
               logging.StreamHandler()],
 )
 log = logging.getLogger("ig")
+
+# ── chromium major version (Docker ke chromium se match) ─────────────────
+def chromium_major():
+    for binary in ("chromium", "/usr/bin/chromium", "chromium-browser"):
+        try:
+            out = subprocess.check_output([binary, "--version"],
+                                          text=True, timeout=5,
+                                          stderr=subprocess.DEVNULL)
+            m = re.search(r"(\d+)\.", out)
+            if m:
+                return int(m.group(1))
+        except Exception:
+            continue
+    return None
 
 # ── device fingerprints ───────────────────────────────────────────────────
 IPHONES = [
@@ -63,38 +71,30 @@ ANDROIDS = [
     {"model": "Pixel 8 Pro",      "ua": "Mozilla/5.0 (Linux; Android 14; Pixel 8 Pro) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36", "res": (480, 1084)},
 ]
 
-
-def gen_device() -> dict:
+def gen_device():
     return random.choice(IPHONES if random.random() < 0.6 else ANDROIDS)
-
 
 # ── proxy pool ────────────────────────────────────────────────────────────
 class ProxyPool:
     def __init__(self, res, dc):
         self.res, self.dc, self.dead = list(res), list(dc), set()
-
     def get(self):
         for pool in (self.res, self.dc):
             live = [p for p in pool if p not in self.dead]
             if live:
                 return random.choice(live)
         return None
-
     def mark_dead(self, p):
         if p:
             self.dead.add(p)
 
-
 proxies = ProxyPool(RESIDENTIAL_PROXIES, DATACENTER_PROXIES)
 
-
-# ── 5sim (sync, no asyncio) ───────────────────────────────────────────────
+# ── 5sim (sync) ───────────────────────────────────────────────────────────
 class FiveSim:
     BASE = "https://5sim.net/v1"
-
     def __init__(self, key):
         self.h = {"Authorization": f"Bearer {key}", "Accept": "application/json"}
-
     def buy(self, country=SMS_COUNTRY, product="instagram"):
         r = requests.get(f"{self.BASE}/user/buy/activation/{country}/any/{product}",
                          headers=self.h, timeout=20)
@@ -104,7 +104,6 @@ class FiveSim:
         d = r.json()
         log.info("5sim number %s (order %s)", d.get("phone"), d.get("id"))
         return {"phone": d.get("phone"), "order_id": d.get("id")}
-
     def code(self, order_id, timeout=300):
         deadline = time.time() + timeout
         while time.time() < deadline:
@@ -128,34 +127,22 @@ class FiveSim:
                     if m:
                         return m.group(1)
         return None
-
-    def finish(self, order_id):
-        try:
-            requests.get(f"{self.BASE}/user/finish/{order_id}",
-                         headers=self.h, timeout=10)
-        except requests.RequestException:
-            pass
-
-    def cancel(self, order_id):
-        try:
-            requests.get(f"{self.BASE}/user/cancel/{order_id}",
-                         headers=self.h, timeout=10)
-        except requests.RequestException:
-            pass
-
+    def finish(self, oid):
+        try: requests.get(f"{self.BASE}/user/finish/{oid}", headers=self.h, timeout=10)
+        except Exception: pass
+    def cancel(self, oid):
+        try: requests.get(f"{self.BASE}/user/cancel/{oid}", headers=self.h, timeout=10)
+        except Exception: pass
 
 sms = FiveSim(FIVESIM_KEY)
 
-
-# ── 2captcha (actually called) ────────────────────────────────────────────
+# ── 2captcha ──────────────────────────────────────────────────────────────
 class Captcha:
     def __init__(self, key):
         self.s = TwoCaptcha(key) if key else None
         self.count = 0
-
-    def solve_hcaptcha(self, sitekey, url):
-        if not self.s:
-            return None
+    def hcaptcha(self, sitekey, url):
+        if not self.s: return None
         try:
             r = self.s.hcaptcha(sitekey=sitekey, pageurl=url)
             self.count += 1
@@ -164,13 +151,11 @@ class Captcha:
         except Exception as e:
             log.error("hCaptcha: %s", e)
             return None
-
-    def solve_recaptcha_v3(self, sitekey, url, action="signup", min_score=0.5):
-        if not self.s:
-            return None
+    def recaptcha(self, sitekey, url):
+        if not self.s: return None
         try:
             r = self.s.recaptcha(sitekey=sitekey, url=url, version="v3",
-                                 action=action, score=min_score)
+                                 action="signup")
             self.count += 1
             log.info("reCaptcha v3 solved")
             return r.get("code")
@@ -178,13 +163,10 @@ class Captcha:
             log.error("reCaptcha v3: %s", e)
             return None
 
-
 captcha = Captcha(TWOCAPTCHA_KEY)
 
-
-# ── selector helper ───────────────────────────────────────────────────────
+# ── helpers ───────────────────────────────────────────────────────────────
 def find_first(driver, locators, timeout=15):
-    """Try each (By, value) until one appears and is visible."""
     deadline = time.time() + timeout
     while time.time() < deadline:
         for by, val in locators:
@@ -197,10 +179,7 @@ def find_first(driver, locators, timeout=15):
         time.sleep(0.5)
     return None
 
-
-# ── captcha detection ─────────────────────────────────────────────────────
 def detect_captcha(driver):
-    """Return ('hcaptcha', sitekey) or ('recaptcha', sitekey) or None."""
     html = driver.page_source
     m = re.search(r'"sitekey"\s*:\s*"([0-9a-fA-F-]{20,})"', html)
     sitekey = m.group(1) if m else None
@@ -209,7 +188,6 @@ def detect_captcha(driver):
     if "recaptcha/api.js" in html or "g-recaptcha" in html or "grecaptcha" in html:
         return ("recaptcha", sitekey)
     return None
-
 
 def inject_token(driver, kind, token):
     field = "h-captcha-response" if kind == "hcaptcha" else "g-recaptcha-response"
@@ -220,29 +198,25 @@ def inject_token(driver, kind, token):
         if (byId) { byId.value = tok; byId.innerHTML = tok; }
     """, field, token)
 
-
-def solve_if_present(driver) -> bool:
-    """Detect captcha on page; if present, solve and inject. True = ok/absent."""
+def solve_if_present(driver):
     cap = detect_captcha(driver)
     if not cap:
         return True
     kind, sitekey = cap
     if not sitekey:
-        log.warning("captcha present, no sitekey extracted")
+        log.warning("captcha present, no sitekey")
         return False
     log.info("solving %s", kind)
-    token = (captcha.solve_hcaptcha(sitekey, driver.current_url)
+    token = (captcha.hcaptcha(sitekey, driver.current_url)
              if kind == "hcaptcha"
-             else captcha.solve_recaptcha_v3(sitekey, driver.current_url))
+             else captcha.recaptcha(sitekey, driver.current_url))
     if not token:
         return False
     inject_token(driver, kind, token)
     time.sleep(1.5)
     return True
 
-
-# ── success check ─────────────────────────────────────────────────────────
-def account_live(driver) -> bool:
+def account_live(driver):
     url = driver.current_url
     if any(x in url for x in ("emailsignup", "/confirm", "/challenge", "/suspended")):
         return False
@@ -252,8 +226,7 @@ def account_live(driver) -> bool:
         return True
     return False
 
-
-# ── the worker ────────────────────────────────────────────────────────────
+# ── worker ────────────────────────────────────────────────────────────────
 def create_one(device, proxy, country=SMS_COUNTRY):
     order = sms.buy(country=country)
     if not order:
@@ -269,6 +242,8 @@ def create_one(device, proxy, country=SMS_COUNTRY):
     opts.headless = True
     opts.add_argument("--no-sandbox")
     opts.add_argument("--disable-dev-shm-usage")
+    opts.add_argument("--disable-gpu")
+    opts.add_argument("--window-size=390,844")
     opts.add_argument(f"--user-agent={device['ua']}")
     if proxy:
         opts.add_argument(f"--proxy-server=http://{proxy}")
@@ -276,12 +251,11 @@ def create_one(device, proxy, country=SMS_COUNTRY):
     driver = None
     try:
         log.info("launch %s via %s", device["model"], proxy)
-        driver = uc.Chrome(options=opts)
+        vm = chromium_major()
+        driver = uc.Chrome(options=opts, version_main=vm) if vm else uc.Chrome(options=opts)
         driver.set_window_size(*device["res"])
         driver.get("https://www.instagram.com/accounts/emailsignup/")
         time.sleep(5)
-
-        # captcha may greet us on load
         solve_if_present(driver)
 
         el = find_first(driver, [(By.NAME, "emailOrPhone"),
@@ -291,27 +265,21 @@ def create_one(device, proxy, country=SMS_COUNTRY):
         el.send_keys(phone)
 
         fn = find_first(driver, [(By.NAME, "fullName")], timeout=8)
-        if fn:
-            fn.send_keys(full_name)
+        if fn: fn.send_keys(full_name)
 
         for _ in range(3):
             u = find_first(driver, [(By.NAME, "username")], timeout=8)
-            if not u:
-                break
-            u.clear()
-            u.send_keys(username)
-            time.sleep(1.2)
+            if not u: break
+            u.clear(); u.send_keys(username); time.sleep(1.2)
             if not driver.find_elements(By.XPATH,
                     "//*[contains(text(),'not available') or contains(text(),'already taken')]"):
                 break
             username = f"u{random.randint(10**9, 10**10 - 1)}"
 
         pw = find_first(driver, [(By.NAME, "password")], timeout=8)
-        if pw:
-            pw.send_keys(password)
+        if pw: pw.send_keys(password)
         time.sleep(1.5)
 
-        # captcha can also pop before submit
         solve_if_present(driver)
 
         btn = find_first(driver, [(By.XPATH, "//button[@type='submit']"),
@@ -319,10 +287,8 @@ def create_one(device, proxy, country=SMS_COUNTRY):
                                   (By.XPATH, "//button[contains(.,'Next')]")], timeout=10)
         if not btn:
             raise RuntimeError("signup button missing")
-        btn.click()
-        time.sleep(6)
+        btn.click(); time.sleep(6)
 
-        # birthday (may or may not show)
         month = find_first(driver, [(By.NAME, "month")], timeout=4)
         if month:
             Select(month).select_by_value(str(m))
@@ -330,11 +296,9 @@ def create_one(device, proxy, country=SMS_COUNTRY):
             Select(driver.find_element(By.NAME, "year")).select_by_value(str(y))
             time.sleep(1)
             nb = find_first(driver, [(By.XPATH, "//button[contains(.,'Next')]")], timeout=5)
-            if nb:
-                nb.click()
+            if nb: nb.click()
             time.sleep(5)
 
-        # captcha can pop again on the confirm screen
         solve_if_present(driver)
 
         log.info("waiting 5sim code (order %s)", order_id)
@@ -354,13 +318,11 @@ def create_one(device, proxy, country=SMS_COUNTRY):
         ], timeout=20)
         if not code_field:
             raise RuntimeError("code field missing")
-        code_field.clear()
-        code_field.send_keys(code)
+        code_field.clear(); code_field.send_keys(code)
 
         conf = find_first(driver, [(By.XPATH, "//button[contains(.,'Confirm') or contains(.,'Next')]")],
                           timeout=10)
-        if conf:
-            conf.click()
+        if conf: conf.click()
         time.sleep(8)
 
         if not account_live(driver):
@@ -371,24 +333,20 @@ def create_one(device, proxy, country=SMS_COUNTRY):
         sms.finish(order_id)
         rec = {"username": username, "password": password, "phone": phone,
                "device": device["model"], "created_at": datetime.now().isoformat()}
-        with open(CREATED_LOG, "a", newline="") as fh:
+        with open(CREATED_CSV, "a", newline="") as fh:
             csv.writer(fh).writerow([username, password, phone, device["model"]])
         log.info("CREATED %s / %s", username, password)
         return rec
-
     except Exception as e:
         log.exception("worker: %s", e)
         return None
     finally:
         if driver:
-            try:
-                driver.quit()
-            except Exception:
-                pass
-
+            try: driver.quit()
+            except Exception: pass
 
 # ── runner ────────────────────────────────────────────────────────────────
-def run(n: int = 1, country: str = SMS_COUNTRY):
+def run(n=1, country=SMS_COUNTRY):
     made = []
     for i in range(1, n + 1):
         device = gen_device()
@@ -401,37 +359,30 @@ def run(n: int = 1, country: str = SMS_COUNTRY):
         else:
             proxies.mark_dead(proxy)
             time.sleep(random.uniform(10, 20))
-
     with open(OUT_JSON, "w", encoding="utf-8") as fh:
         json.dump({"total": n, "success": len(made), "accounts": made},
                   fh, indent=2, ensure_ascii=False)
     log.info("done: %d/%d → %s", len(made), n, OUT_JSON)
     return made
 
-
-# ── telegram (optional) ───────────────────────────────────────────────────
+# ── telegram ──────────────────────────────────────────────────────────────
 def start_telegram():
     if not BOT_TOKEN:
-        log.info("no BOT_TOKEN — CLI mode only")
+        log.info("no BOT_TOKEN — CLI mode")
         return False
     from telegram.ext import Application, CommandHandler
-
     async def cmd_start(update, ctx):
-        await update.message.reply_text(
-            "IG creator ready.\n/create [n] — run\n/status — state")
-
+        await update.message.reply_text("IG creator ready.\n/create [n]\n/status")
     async def cmd_create(update, ctx):
         n = int(ctx.args[0]) if ctx.args else 1
         n = min(n, 10)
         msg = await update.message.reply_text(f"running {n}...")
         made = run(n)
         await msg.edit_text(f"done: {len(made)}/{n}\nsee {OUT_JSON}")
-
     async def cmd_status(update, ctx):
         await update.message.reply_text(
             f"proxies: {len(proxies.res)+len(proxies.dc)-len(proxies.dead)}\n"
             f"captchas solved: {captcha.count}")
-
     app = Application.builder().token(BOT_TOKEN).build()
     app.add_handler(CommandHandler("start", cmd_start))
     app.add_handler(CommandHandler("create", cmd_create))
@@ -439,7 +390,6 @@ def start_telegram():
     log.info("telegram polling")
     app.run_polling(drop_pending_updates=True)
     return True
-
 
 if __name__ == "__main__":
     if len(sys.argv) > 1 and sys.argv[1].isdigit():
