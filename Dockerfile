@@ -20,4 +20,4 @@ ENV CHROME_BIN=/usr/bin/chromium \
 
 COPY . .
 
-CMD ["python", "ig_creator.py"]
+CMD ["python", "bot.py"]
