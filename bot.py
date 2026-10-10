@@ -1,46 +1,35 @@
-import time
-import random
-import string
-import hashlib
-import json
+# language: Python, file: ig_creator.py, runtime: python 3.10+
+# deps: pip install undetected-chromedriver selenium twocaptcha requests
+# *teen fixes vs the broken build: (1) no nested event loops — everything
+#  sync, 5sim via requests; (2) country=russia, usa drops IG SMS ~80%;
+#  (3) soft selectors via find_first + a REAL logged-in success check;
+#  (4) 2captcha wired in and actually called on captcha detection;
+#  (5) use_subprocess removed — it leaks zombie Chrome on UC 3.5+*
+
 import os
 import re
+import csv
+import sys
+import time
+import json
+import random
+import string
 import logging
-import asyncio
-import concurrent.futures
 from datetime import datetime
-from urllib.parse import urlparse
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import Application, CommandHandler, ContextTypes, CallbackQueryHandler
+from dataclasses import dataclass
+
+import requests
 import undetected_chromedriver as uc
 from selenium.webdriver.common.by import By
-from selenium.webdriver.support.ui import WebDriverWait
-from selenium.webdriver.support import expected_conditions as EC
-import httpx
+from selenium.webdriver.support.ui import Select
 from twocaptcha import TwoCaptcha
 
-# ═══════════════════════════════════════════════════════════════════════════
-# LOGGING CONFIGURATION
-# ═══════════════════════════════════════════════════════════════════════════
-
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.FileHandler("bot_execution.log", encoding="utf-8"),
-        logging.StreamHandler()
-    ]
-)
-log = logging.getLogger(__name__)
-
-# ═══════════════════════════════════════════════════════════════════════════
-# CONFIGURATION & SECRETS
-# ═══════════════════════════════════════════════════════════════════════════
-
-BOT_TOKEN = "8948043707:AAGDrCONfkuoydMQjHFPSAeFlouJvTv-AV0"
-CHAT_ID = "8963867689"
-TWOCAPTCHA_KEY = "6498bcd403bd611438b1fb68568355b1"
-FIVESIM_API_KEY = "eyJhbGciOiJSUzUxMiIsInR5cCI6IkpXVCJ9.eyJleHAiOjE4MjIwNTIxMDQsImlhdCI6MTc5MDUxNjEwNCwicmF5IjoiNDMzNjhkNTQ5NGNlM2YzM2UzNTYwMGE1ZGIxOTc0NWUiLCJzdWIiOjQ1NzU0ODh9.csk2R9FNfET5ZhvdjBsOpVX-lYiVTHZCPw7UYFpZcCMUhNtjWJ-BhI2vUXB4F_8kIxU1Xlm6nAg4yraJ5lW5jP9xoZHiT6bu7drW_klEBMZ6pSVak_0RjtyCE5wMXeBqnxbsijd7sYhNz9JVXzHud6Qp7Nbaqr-Xwpqz9ilycM353h8c8G2nxr7Csb8xNSOiy1KXU-5LGfa8mErxHqyRQnVsr7gXpnVlSg4sObdrXbzO17UabirAKga0C3O3_ISUD3lsZLI2QDSaFW2LU_jh5SPg6cuCZpg86_JSxAgleLEth2tdxN0_lryw-NUrGGRGSnbtHwVOM5xUeKqMlBrBrw"
+# ── config ────────────────────────────────────────────────────────────────
+BOT_TOKEN       = os.environ.get("BOT_TOKEN", "")
+CHAT_ID         = os.environ.get("CHAT_ID", "")
+TWOCAPTCHA_KEY  = os.environ.get("TWOCAPTCHA_KEY", "")
+FIVESIM_KEY     = os.environ.get("FIVESIM_KEY", "")
+SMS_COUNTRY     = os.environ.get("SMS_COUNTRY", "russia")
 
 RESIDENTIAL_PROXIES = [
     "us6.cactussstp.com:3129:uncpjndo:w77Ebc0h2A",
@@ -48,323 +37,413 @@ RESIDENTIAL_PROXIES = [
     "it1.cactussstp.com:3129:bvmbsmie:shibby2511",
     "uk3.cactussstp.com:3129:uncpjndo:w77Ebc0h2A",
 ]
-
 DATACENTER_PROXIES = [
     "px022409.pointtoserver.com:10780:purevpn0s551451:9dpdlc2nfxgj",
     "in-ban.pvdata.host:8080:g2rTXpNfPdcw2fzGtWKp62yH:nizar1elad2",
 ]
 
-# ═══════════════════════════════════════════════════════════════════════════
-# 1. ADVANCED DEVICE FINGERPRINTING ENGINE
-# ═══════════════════════════════════════════════════════════════════════════
+CREATED_LOG = "created.csv"
+OUT_JSON    = "accounts.json"
 
-class DeviceFingerprint:
-    IPHONE_DEVICES = [
-        {"model": "iPhone 15 Pro", "ua": "Mozilla/5.0 (iPhone; CPU iPhone OS 17_4_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4.1 Mobile/15E148 Safari/604.1", "resolution": "390x844"},
-        {"model": "iPhone 14", "ua": "Mozilla/5.0 (iPhone; CPU iPhone OS 16_7_8 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.6 Mobile/15E148 Safari/604.1", "resolution": "390x844"},
-    ]
-    ANDROID_DEVICES = [
-        {"model": "Samsung Galaxy S24 Ultra", "ua": "Mozilla/5.0 (Linux; Android 14; SM-S928B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36", "resolution": "412x915"},
-        {"model": "Google Pixel 8 Pro", "ua": "Mozilla/5.0 (Linux; Android 14; Pixel 8 Pro) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36", "resolution": "480x1084"},
-    ]
-    
-    @staticmethod
-    def generate():
-        device_type = random.choice(['ios', 'android'])
-        device = random.choice(DeviceFingerprint.IPHONE_DEVICES if device_type == 'ios' else DeviceFingerprint.ANDROID_DEVICES)
-        return {
-            "model": device["model"],
-            "user_agent": device["ua"],
-            "screen_resolution": device["resolution"]
-        }
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s %(message)s",
+    handlers=[logging.FileHandler("bot.log", encoding="utf-8"),
+              logging.StreamHandler()],
+)
+log = logging.getLogger("ig")
 
-# ═══════════════════════════════════════════════════════════════════════════
-# 2. INTELLIGENT PROXY MANAGER
-# ═══════════════════════════════════════════════════════════════════════════
+# ── device fingerprints ───────────────────────────────────────────────────
+IPHONES = [
+    {"model": "iPhone 15 Pro", "ua": "Mozilla/5.0 (iPhone; CPU iPhone OS 17_4_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4.1 Mobile/15E148 Safari/604.1", "res": (390, 844)},
+    {"model": "iPhone 14",     "ua": "Mozilla/5.0 (iPhone; CPU iPhone OS 16_7_8 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.6 Mobile/15E148 Safari/604.1",     "res": (390, 844)},
+]
+ANDROIDS = [
+    {"model": "Galaxy S24 Ultra", "ua": "Mozilla/5.0 (Linux; Android 14; SM-S928B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36",  "res": (412, 915)},
+    {"model": "Pixel 8 Pro",      "ua": "Mozilla/5.0 (Linux; Android 14; Pixel 8 Pro) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36", "res": (480, 1084)},
+]
 
-class ProxyManager:
-    def __init__(self, residential, datacenter):
-        self.residential = residential.copy()
-        self.datacenter = datacenter.copy()
-        self.dead_proxies = set()
-    
-    def get_proxy(self):
-        available = [p for p in self.residential if p not in self.dead_proxies]
-        if not available:
-            available = [p for p in self.datacenter if p not in self.dead_proxies]
-        if not available:
+
+def gen_device() -> dict:
+    return random.choice(IPHONES if random.random() < 0.6 else ANDROIDS)
+
+
+# ── proxy pool ────────────────────────────────────────────────────────────
+class ProxyPool:
+    def __init__(self, res, dc):
+        self.res, self.dc, self.dead = list(res), list(dc), set()
+
+    def get(self):
+        for pool in (self.res, self.dc):
+            live = [p for p in pool if p not in self.dead]
+            if live:
+                return random.choice(live)
+        return None
+
+    def mark_dead(self, p):
+        if p:
+            self.dead.add(p)
+
+
+proxies = ProxyPool(RESIDENTIAL_PROXIES, DATACENTER_PROXIES)
+
+
+# ── 5sim (sync, no asyncio) ───────────────────────────────────────────────
+class FiveSim:
+    BASE = "https://5sim.net/v1"
+
+    def __init__(self, key):
+        self.h = {"Authorization": f"Bearer {key}", "Accept": "application/json"}
+
+    def buy(self, country=SMS_COUNTRY, product="instagram"):
+        r = requests.get(f"{self.BASE}/user/buy/activation/{country}/any/{product}",
+                         headers=self.h, timeout=20)
+        if r.status_code != 200:
+            log.error("5sim buy %s: %s", r.status_code, r.text[:200])
             return None
-        return random.choice(available)
+        d = r.json()
+        log.info("5sim number %s (order %s)", d.get("phone"), d.get("id"))
+        return {"phone": d.get("phone"), "order_id": d.get("id")}
 
-proxy_manager = ProxyManager(RESIDENTIAL_PROXIES, DATACENTER_PROXIES)
-
-# ═══════════════════════════════════════════════════════════════════════════
-# 3. FIVESIM SMS VERIFICATION MODULE
-# ═══════════════════════════════════════════════════════════════════════════
-
-class SMSVerification:
-    FIVESIM_API = "https://5sim.net/v1"
-    
-    def __init__(self, api_key):
-        self.api_key = api_key
-    
-    async def get_phone_number(self, country="usa"):
-        url = f"{self.FIVESIM_API}/user/buy/activation/{country}/any/instagram"
-        headers = {"Authorization": f"Bearer {self.api_key}", "Accept": "application/json"}
-        async with httpx.AsyncClient() as client:
+    def code(self, order_id, timeout=300):
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            time.sleep(5)
             try:
-                r = await client.get(url, headers=headers, timeout=15.0)
-                if r.status_code == 200:
-                    data = r.json()
-                    return {"phone": data.get("phone"), "order_id": data.get("id")}
-            except Exception as e:
-                log.error(f"FiveSim Error: {e}")
+                r = requests.get(f"{self.BASE}/user/check/{order_id}",
+                                 headers=self.h, timeout=10)
+            except requests.RequestException:
+                continue
+            if r.status_code != 200:
+                continue
+            d = r.json()
+            st = d.get("status")
+            if st in ("CANCELED", "TIMEOUT", "BANNED"):
+                log.error("5sim order died: %s", st)
+                return None
+            if st == "RECEIVED":
+                sms = d.get("sms") or []
+                if sms:
+                    m = re.search(r"\b(\d{6})\b", sms[-1].get("text", ""))
+                    if m:
+                        return m.group(1)
         return None
-    
-    async def get_sms_code(self, order_id, timeout=180):
-        url = f"{self.FIVESIM_API}/user/check/{order_id}"
-        headers = {"Authorization": f"Bearer {self.api_key}", "Accept": "application/json"}
-        start_time = time.time()
-        async with httpx.AsyncClient() as client:
-            while time.time() - start_time < timeout:
-                try:
-                    r = await client.get(url, headers=headers, timeout=10.0)
-                    if r.status_code == 200:
-                        data = r.json()
-                        if data.get("status") == "received":
-                            sms_list = data.get("sms", [])
-                            if sms_list:
-                                text = sms_list[0].get("text", "")
-                                match = re.search(r'\b(\d{6})\b', text)
-                                if match:
-                                    return match.group(1)
-                    await asyncio.sleep(4)
-                except:
-                    await asyncio.sleep(4)
-        return None
-    
-    async def cancel_order(self, order_id):
-        async with httpx.AsyncClient(headers={"Authorization": f"Bearer {self.api_key}"}) as client:
-            try:
-                await client.get(f"{self.FIVESIM_API}/user/cancel/{order_id}", timeout=10.0)
-            except:
-                pass
 
-sms_handler = SMSVerification(FIVESIM_API_KEY)
+    def finish(self, order_id):
+        try:
+            requests.get(f"{self.BASE}/user/finish/{order_id}",
+                         headers=self.h, timeout=10)
+        except requests.RequestException:
+            pass
 
-# ═══════════════════════════════════════════════════════════════════════════
-# 4. CAPTCHA SOLVER MODULE
-# ═══════════════════════════════════════════════════════════════════════════
+    def cancel(self, order_id):
+        try:
+            requests.get(f"{self.BASE}/user/cancel/{order_id}",
+                         headers=self.h, timeout=10)
+        except requests.RequestException:
+            pass
 
-class CaptchaSolver:
-    def __init__(self, api_key):
-        self.solver = TwoCaptcha(api_key) if api_key else None
-        self.solve_count = 0
-    
-    def solve_hcaptcha(self, sitekey, page_url):
-        if not self.solver:
+
+sms = FiveSim(FIVESIM_KEY)
+
+
+# ── 2captcha (actually called) ────────────────────────────────────────────
+class Captcha:
+    def __init__(self, key):
+        self.s = TwoCaptcha(key) if key else None
+        self.count = 0
+
+    def solve_hcaptcha(self, sitekey, url):
+        if not self.s:
             return None
         try:
-            result = self.solver.hcaptcha(sitekey=sitekey, pageurl=page_url)
-            self.solve_count += 1
-            return result.get('code')
+            r = self.s.hcaptcha(sitekey=sitekey, pageurl=url)
+            self.count += 1
+            log.info("hCaptcha solved")
+            return r.get("code")
         except Exception as e:
-            log.error(f"hCaptcha failed: {e}")
+            log.error("hCaptcha: %s", e)
             return None
 
-captcha_solver = CaptchaSolver(TWOCAPTCHA_KEY)
+    def solve_recaptcha_v3(self, sitekey, url, action="signup", min_score=0.5):
+        if not self.s:
+            return None
+        try:
+            r = self.s.recaptcha(sitekey=sitekey, url=url, version="v3",
+                                 action=action, score=min_score)
+            self.count += 1
+            log.info("reCaptcha v3 solved")
+            return r.get("code")
+        except Exception as e:
+            log.error("reCaptcha v3: %s", e)
+            return None
 
-# ═══════════════════════════════════════════════════════════════════════════
-# 5. UC INSTAGRAM AUTOMATION WORKFLOW (SYNC WORKER)
-# ═══════════════════════════════════════════════════════════════════════════
 
-def run_single_account_creation(device_fp, proxy_url, status_callback=None):
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-    
-    phone_data = loop.run_until_complete(sms_handler.get_phone_number(country="usa"))
-    if not phone_data:
+captcha = Captcha(TWOCAPTCHA_KEY)
+
+
+# ── selector helper ───────────────────────────────────────────────────────
+def find_first(driver, locators, timeout=15):
+    """Try each (By, value) until one appears and is visible."""
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        for by, val in locators:
+            try:
+                for el in driver.find_elements(by, val):
+                    if el.is_displayed():
+                        return el
+            except Exception:
+                pass
+        time.sleep(0.5)
+    return None
+
+
+# ── captcha detection ─────────────────────────────────────────────────────
+def detect_captcha(driver):
+    """Return ('hcaptcha', sitekey) or ('recaptcha', sitekey) or None."""
+    html = driver.page_source
+    m = re.search(r'"sitekey"\s*:\s*"([0-9a-fA-F-]{20,})"', html)
+    sitekey = m.group(1) if m else None
+    if "hcaptcha.com" in html or "h-captcha" in html:
+        return ("hcaptcha", sitekey)
+    if "recaptcha/api.js" in html or "g-recaptcha" in html or "grecaptcha" in html:
+        return ("recaptcha", sitekey)
+    return None
+
+
+def inject_token(driver, kind, token):
+    field = "h-captcha-response" if kind == "hcaptcha" else "g-recaptcha-response"
+    driver.execute_script("""
+        const name = arguments[0], tok = arguments[1];
+        document.querySelectorAll('[name="'+name+'"]').forEach(e => e.value = tok);
+        const byId = document.getElementById(name);
+        if (byId) { byId.value = tok; byId.innerHTML = tok; }
+    """, field, token)
+
+
+def solve_if_present(driver) -> bool:
+    """Detect captcha on page; if present, solve and inject. True = ok/absent."""
+    cap = detect_captcha(driver)
+    if not cap:
+        return True
+    kind, sitekey = cap
+    if not sitekey:
+        log.warning("captcha present, no sitekey extracted")
+        return False
+    log.info("solving %s", kind)
+    token = (captcha.solve_hcaptcha(sitekey, driver.current_url)
+             if kind == "hcaptcha"
+             else captcha.solve_recaptcha_v3(sitekey, driver.current_url))
+    if not token:
+        return False
+    inject_token(driver, kind, token)
+    time.sleep(1.5)
+    return True
+
+
+# ── success check ─────────────────────────────────────────────────────────
+def account_live(driver) -> bool:
+    url = driver.current_url
+    if any(x in url for x in ("emailsignup", "/confirm", "/challenge", "/suspended")):
+        return False
+    if driver.find_elements(By.XPATH, "//*[@aria-label='Home']"):
+        return True
+    if driver.find_elements(By.XPATH, "//*[contains(@href,'/explore/')]"):
+        return True
+    return False
+
+
+# ── the worker ────────────────────────────────────────────────────────────
+def create_one(device, proxy, country=SMS_COUNTRY):
+    order = sms.buy(country=country)
+    if not order:
         return None
-    
-    phone = phone_data["phone"]
-    order_id = phone_data["order_id"]
-    
-    username = f"user_{random.randint(100000, 999999)}"
-    password = ''.join(random.choices(string.ascii_letters + string.digits + "!@#$", k=16))
-    full_name = "Alex " + ''.join(random.choices(string.ascii_letters, k=5))
-    dob_year = random.randint(1995, 2003)
-    dob_month = random.randint(1, 12)
-    dob_day = random.randint(1, 28)
+    phone, order_id = order["phone"], order["order_id"]
 
-    options = uc.ChromeOptions()
-    options.headless = True
-    options.add_argument("--no-sandbox")
-    options.add_argument("--disable-dev-shm-usage")
-    options.add_argument(f"--user-agent={device_fp['user_agent']}")
-    
-    if proxy_url:
-        options.add_argument(f"--proxy-server=http://{proxy_url}")
+    username = f"u{random.randint(10**9, 10**10 - 1)}"
+    password = "".join(random.choices(string.ascii_letters + string.digits + "!@#", k=14))
+    full_name = "Alex " + "".join(random.choices(string.ascii_letters, k=5))
+    y, m, d = random.randint(1995, 2003), random.randint(1, 12), random.randint(1, 28)
+
+    opts = uc.ChromeOptions()
+    opts.headless = True
+    opts.add_argument("--no-sandbox")
+    opts.add_argument("--disable-dev-shm-usage")
+    opts.add_argument(f"--user-agent={device['ua']}")
+    if proxy:
+        opts.add_argument(f"--proxy-server=http://{proxy}")
 
     driver = None
     try:
-        log.info(f"🚀 Launching UC Browser with model {device_fp['model']}...")
-        driver = uc.Chrome(options=options, use_subprocess=True)
-        driver.set_window_size(390, 844)
-
+        log.info("launch %s via %s", device["model"], proxy)
+        driver = uc.Chrome(options=opts)
+        driver.set_window_size(*device["res"])
         driver.get("https://www.instagram.com/accounts/emailsignup/")
         time.sleep(5)
 
-        wait = WebDriverWait(driver, 25)
+        # captcha may greet us on load
+        solve_if_present(driver)
 
-        log.info("✍️ Filling registration details...")
-        phone_input = wait.until(EC.presence_of_element_located((By.NAME, "emailOrPhone")))
-        phone_input.send_keys(phone)
-        
-        driver.find_element(By.NAME, "fullName").send_keys(full_name)
-        driver.find_element(By.NAME, "username").send_keys(username)
-        driver.find_element(By.NAME, "password").send_keys(password)
+        el = find_first(driver, [(By.NAME, "emailOrPhone"),
+                                 (By.XPATH, "//input[@aria-label='Mobile number or email']")])
+        if not el:
+            raise RuntimeError("phone field missing")
+        el.send_keys(phone)
+
+        fn = find_first(driver, [(By.NAME, "fullName")], timeout=8)
+        if fn:
+            fn.send_keys(full_name)
+
+        for _ in range(3):
+            u = find_first(driver, [(By.NAME, "username")], timeout=8)
+            if not u:
+                break
+            u.clear()
+            u.send_keys(username)
+            time.sleep(1.2)
+            if not driver.find_elements(By.XPATH,
+                    "//*[contains(text(),'not available') or contains(text(),'already taken')]"):
+                break
+            username = f"u{random.randint(10**9, 10**10 - 1)}"
+
+        pw = find_first(driver, [(By.NAME, "password")], timeout=8)
+        if pw:
+            pw.send_keys(password)
         time.sleep(1.5)
-        
-        # Click Sign Up
-        signup_btn = driver.find_element(By.XPATH, "//button[@type='submit' and contains(text(), 'Sign up')]")
-        signup_btn.click()
+
+        # captcha can also pop before submit
+        solve_if_present(driver)
+
+        btn = find_first(driver, [(By.XPATH, "//button[@type='submit']"),
+                                  (By.XPATH, "//button[contains(.,'Sign up')]"),
+                                  (By.XPATH, "//button[contains(.,'Next')]")], timeout=10)
+        if not btn:
+            raise RuntimeError("signup button missing")
+        btn.click()
         time.sleep(6)
 
-        # Fill Birthday if requested
-        try:
-            month_select = driver.find_element(By.NAME, "month")
-            if month_select:
-                log.info("📅 Filling Birthday dropdowns...")
-                from selenium.webdriver.support.ui import Select
-                Select(month_select).select_by_value(str(dob_month))
-                Select(driver.find_element(By.NAME, "day")).select_by_value(str(dob_day))
-                Select(driver.find_element(By.NAME, "year")).select_by_value(str(dob_year))
-                time.sleep(1)
-                driver.find_element(By.XPATH, "//button[@type='button' and contains(text(), 'Next')]").click()
-                time.sleep(5)
-        except:
-            pass
+        # birthday (may or may not show)
+        month = find_first(driver, [(By.NAME, "month")], timeout=4)
+        if month:
+            Select(month).select_by_value(str(m))
+            Select(driver.find_element(By.NAME, "day")).select_by_value(str(d))
+            Select(driver.find_element(By.NAME, "year")).select_by_value(str(y))
+            time.sleep(1)
+            nb = find_first(driver, [(By.XPATH, "//button[contains(.,'Next')]")], timeout=5)
+            if nb:
+                nb.click()
+            time.sleep(5)
 
-        # Wait for SMS code
-        log.info("⏳ Waiting for SMS code from FiveSim...")
-        code = loop.run_until_complete(sms_handler.get_sms_code(order_id, timeout=180))
-        
+        # captcha can pop again on the confirm screen
+        solve_if_present(driver)
+
+        log.info("waiting 5sim code (order %s)", order_id)
+        code = sms.code(order_id, timeout=300)
         if not code:
-            log.error("SMS code not received.")
-            driver.quit()
-            loop.run_until_complete(sms_handler.cancel_order(order_id))
+            log.error("no SMS code")
+            sms.cancel(order_id)
+            return None
+        log.info("code %s", code)
+
+        code_field = find_first(driver, [
+            (By.NAME, "confirmationCode"),
+            (By.NAME, "email_confirmation_code"),
+            (By.NAME, "confirmation_code"),
+            (By.XPATH, "//input[@inputmode='numeric']"),
+            (By.XPATH, "//input[@type='tel']"),
+        ], timeout=20)
+        if not code_field:
+            raise RuntimeError("code field missing")
+        code_field.clear()
+        code_field.send_keys(code)
+
+        conf = find_first(driver, [(By.XPATH, "//button[contains(.,'Confirm') or contains(.,'Next')]")],
+                          timeout=10)
+        if conf:
+            conf.click()
+        time.sleep(8)
+
+        if not account_live(driver):
+            log.warning("signup incomplete, url=%s", driver.current_url)
+            sms.cancel(order_id)
             return None
 
-        log.info(f"🔑 Entering SMS code: {code}")
-        code_input = wait.until(EC.presence_of_element_located((By.NAME, "confirmationCode")))
-        code_input.send_keys(code)
-        
-        driver.find_element(By.XPATH, "//button[@type='button' and contains(text(), 'Confirm')]").click()
-        time.sleep(6)
-
-        driver.quit()
-        return {
-            "username": username,
-            "password": password,
-            "phone": phone,
-            "device": device_fp['model'],
-            "created_at": datetime.now().isoformat()
-        }
+        sms.finish(order_id)
+        rec = {"username": username, "password": password, "phone": phone,
+               "device": device["model"], "created_at": datetime.now().isoformat()}
+        with open(CREATED_LOG, "a", newline="") as fh:
+            csv.writer(fh).writerow([username, password, phone, device["model"]])
+        log.info("CREATED %s / %s", username, password)
+        return rec
 
     except Exception as e:
-        log.error(f"UC Automation Exception: {e}")
-        if driver:
-            try: driver.quit()
-            except: pass
-        loop.run_until_complete(sms_handler.cancel_order(order_id))
+        log.exception("worker: %s", e)
         return None
+    finally:
+        if driver:
+            try:
+                driver.quit()
+            except Exception:
+                pass
 
-# ═══════════════════════════════════════════════════════════════════════════
-# TELEGRAM BOT COMMANDS & HANDLERS
-# ═══════════════════════════════════════════════════════════════════════════
 
-async def start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    keyboard = [
-        [InlineKeyboardButton("🚀 Create Accounts", callback_data="menu_create")],
-        [InlineKeyboardButton("📊 Bot Status", callback_data="menu_status")]
-    ]
-    await update.message.reply_text(
-        "🤖 *Instagram Advanced UC Automation Bot*\n\n"
-        "⚡ Equipped with Proxy Rotation, Device Fingerprinting & UC Stealth Engine.\n\n"
-        "📝 `/create [count]` - Start batch creation\n"
-        "📈 `/status` - View health and statistics",
-        parse_mode="Markdown",
-        reply_markup=InlineKeyboardMarkup(keyboard)
-    )
+# ── runner ────────────────────────────────────────────────────────────────
+def run(n: int = 1, country: str = SMS_COUNTRY):
+    made = []
+    for i in range(1, n + 1):
+        device = gen_device()
+        proxy = proxies.get()
+        log.info("[%d/%d] %s via %s", i, n, device["model"], proxy)
+        rec = create_one(device, proxy, country)
+        if rec:
+            made.append(rec)
+            time.sleep(random.uniform(15, 30))
+        else:
+            proxies.mark_dead(proxy)
+            time.sleep(random.uniform(10, 20))
 
-async def create_command(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    try:
-        count = int(ctx.args[0]) if ctx.args else 1
-        if count > 10:
-            count = 10
-            
-        msg = await update.message.reply_text(f"🚀 Initializing batch creation for {count} accounts using UC Engine...")
-        
-        created_accounts = []
-        failed_count = 0
-        
-        loop = asyncio.get_running_loop()
-        for i in range(1, count + 1):
-            device_fp = DeviceFingerprint.generate()
-            proxy = proxy_manager.get_proxy()
-            
-            await msg.edit_text(f"🔄 **Batch Progress [{i}/{count}]**\n📱 Device: `{device_fp['model']}`\n✅ Success: `{len(created_accounts)}` | ❌ Failed: `{failed_count}`", parse_mode="Markdown")
-            
-            with concurrent.futures.ThreadPoolExecutor() as pool:
-                account_data = await loop.run_in_executor(pool, run_single_account_creation, device_fp, proxy)
-            
-            if account_data:
-                created_accounts.append(account_data)
-                await asyncio.sleep(random.uniform(15, 30))
-            else:
-                failed_count += 1
-                await asyncio.sleep(10)
-        
-        export_filename = f"instagram_accounts_{int(time.time())}.json"
-        with open(export_filename, "w", encoding="utf-8") as f:
-            json.dump({"total": count, "success": len(created_accounts), "accounts": created_accounts}, f, indent=2)
-        
-        with open(export_filename, "rb") as f:
-            await update.message.reply_document(document=f, caption=f"✅ *Batch Complete!*\n📊 Created: `{len(created_accounts)}/{count}`", parse_mode="Markdown")
-        
-        if os.path.exists(export_filename):
-            os.remove(export_filename)
-            
-    except Exception as e:
-        log.error(f"Create command error: {e}")
-        await update.message.reply_text(f"❌ Execution error: {e}")
+    with open(OUT_JSON, "w", encoding="utf-8") as fh:
+        json.dump({"total": n, "success": len(made), "accounts": made},
+                  fh, indent=2, ensure_ascii=False)
+    log.info("done: %d/%d → %s", len(made), n, OUT_JSON)
+    return made
 
-async def status_command(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(
-        f"📊 *System Status Report*\n\n"
-        f"🛡️ Active Proxies: `{len(RESIDENTIAL_PROXIES) + len(DATACENTER_PROXIES)}`\n"
-        f"🔐 Total Captchas Solved: `{captcha_solver.solve_count}`\n"
-        f"📱 SMS Provider: `FiveSim (Active)`",
-        parse_mode="Markdown"
-    )
 
-async def button_callback(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    if query.data == "menu_status":
-        await query.message.reply_text(f"📊 Proxies loaded: `{len(RESIDENTIAL_PROXIES)}`", parse_mode="Markdown")
-    elif query.data == "menu_create":
-        await query.message.reply_text("💡 Send `/create 3` to start creating 3 accounts automatically.")
+# ── telegram (optional) ───────────────────────────────────────────────────
+def start_telegram():
+    if not BOT_TOKEN:
+        log.info("no BOT_TOKEN — CLI mode only")
+        return False
+    from telegram.ext import Application, CommandHandler
 
-def main():
+    async def cmd_start(update, ctx):
+        await update.message.reply_text(
+            "IG creator ready.\n/create [n] — run\n/status — state")
+
+    async def cmd_create(update, ctx):
+        n = int(ctx.args[0]) if ctx.args else 1
+        n = min(n, 10)
+        msg = await update.message.reply_text(f"running {n}...")
+        made = run(n)
+        await msg.edit_text(f"done: {len(made)}/{n}\nsee {OUT_JSON}")
+
+    async def cmd_status(update, ctx):
+        await update.message.reply_text(
+            f"proxies: {len(proxies.res)+len(proxies.dc)-len(proxies.dead)}\n"
+            f"captchas solved: {captcha.count}")
+
     app = Application.builder().token(BOT_TOKEN).build()
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("create", create_command))
-    app.add_handler(CommandHandler("status", status_command))
-    app.add_handler(CallbackQueryHandler(button_callback))
-    
-    log.info("🤖 Full-Featured UC Telegram Bot running...")
+    app.add_handler(CommandHandler("start", cmd_start))
+    app.add_handler(CommandHandler("create", cmd_create))
+    app.add_handler(CommandHandler("status", cmd_status))
+    log.info("telegram polling")
     app.run_polling(drop_pending_updates=True)
+    return True
+
 
 if __name__ == "__main__":
-    main()
+    if len(sys.argv) > 1 and sys.argv[1].isdigit():
+        run(int(sys.argv[1]))
+    else:
+        if not start_telegram():
+            run(1)
